@@ -20,6 +20,7 @@ module "aws_load_balancer_controller_irsa" {
   version = "~> 6.0"
 
   name                                   = "${var.cluster_name}-aws-load-balancer-controller"
+  use_name_prefix                        = false
   attach_load_balancer_controller_policy = true
 
   oidc_providers = {

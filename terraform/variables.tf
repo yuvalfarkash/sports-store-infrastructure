@@ -16,8 +16,41 @@ variable "vpc_cidr" {
   default     = "10.0.0.0/16"
 }
 
-variable "github_repo" {
-  description = "GitHub repository for OIDC (Owner/Repo)"
+variable "github_organization" {
+  description = "GitHub organization allowed to publish application images"
   type        = string
-  default     = "YOUR_ORG/YOUR_REPO"
+  default     = "sports-store-devops-team"
+}
+
+variable "github_repositories" {
+  description = "GitHub repositories allowed to publish images from their main branches"
+  type        = list(string)
+  default = [
+    "sports-store-frontend",
+    "sports-store-gateway",
+    "sports-store-auth-service",
+    "sports-store-catalog-service",
+    "sports-store-cart-service",
+    "sports-store-order-service",
+    "sports-store-payment-service",
+  ]
+
+  validation {
+    condition = (
+      length(var.github_repositories) == 7 &&
+      length(distinct(var.github_repositories)) == 7 &&
+      alltrue([
+        for repository in var.github_repositories : contains([
+          "sports-store-frontend",
+          "sports-store-gateway",
+          "sports-store-auth-service",
+          "sports-store-catalog-service",
+          "sports-store-cart-service",
+          "sports-store-order-service",
+          "sports-store-payment-service",
+        ], repository)
+      ])
+    )
+    error_message = "github_repositories must contain exactly the seven approved Sports Store application repositories."
+  }
 }

@@ -2,7 +2,7 @@ data "aws_availability_zones" "available" {}
 
 module "vpc" {
   source  = "terraform-aws-modules/vpc/aws"
-  version = "~> 5.0"
+  version = "~> 6.0"
 
   name = "${var.cluster_name}-vpc"
   cidr = var.vpc_cidr
@@ -25,4 +25,6 @@ module "vpc" {
   private_subnet_tags = {
     "kubernetes.io/role/internal-elb" = 1
   }
+
+  tags = local.common_tags
 }

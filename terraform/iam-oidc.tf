@@ -1,16 +1,21 @@
-resource "aws_iam_openid_connect_provider" "github" {
-  url             = "https://token.actions.githubusercontent.com"
-  client_id_list  = ["sts.amazonaws.com"]
-  thumbprint_list = ["6938fd4d98bab03faadb97b34396831e3780aea1", "1c58a3a8518e8759bf075b76b750d4f2df264fcd"]
+data "aws_iam_openid_connect_provider" "github" {
+  url = "https://token.actions.githubusercontent.com"
 }
 
-data "aws_iam_policy_document" "github_actions_assume_role" {
+locals {
+  github_main_branch_subjects = [
+    for repository in var.github_repositories :
+    "repo:${var.github_organization}/${repository}:ref:refs/heads/main"
+  ]
+}
+
+data "aws_iam_policy_document" "github_ecr_publisher_assume_role" {
   statement {
     actions = ["sts:AssumeRoleWithWebIdentity"]
 
     principals {
       type        = "Federated"
-      identifiers = [aws_iam_openid_connect_provider.github.arn]
+      identifiers = [data.aws_iam_openid_connect_provider.github.arn]
     }
 
     condition {
@@ -20,65 +25,47 @@ data "aws_iam_policy_document" "github_actions_assume_role" {
     }
 
     condition {
-      test     = "StringLike"
+      test     = "StringEquals"
       variable = "token.actions.githubusercontent.com:sub"
-      values   = ["repo:${var.github_repo}:*"]
+      values   = local.github_main_branch_subjects
     }
   }
 }
 
-resource "aws_iam_role" "github_actions" {
-  name               = "github-actions-deploy-role"
-  assume_role_policy = data.aws_iam_policy_document.github_actions_assume_role.json
+resource "aws_iam_role" "github_ecr_publisher" {
+  name               = "sports-store-github-ecr-publisher"
+  assume_role_policy = data.aws_iam_policy_document.github_ecr_publisher_assume_role.json
+
+  tags = local.common_tags
 }
 
-data "aws_iam_policy_document" "github_actions_policy" {
+data "aws_iam_policy_document" "github_ecr_publisher" {
   statement {
+    sid       = "ECRAuthentication"
+    actions   = ["ecr:GetAuthorizationToken"]
+    resources = ["*"]
+  }
+
+  statement {
+    sid = "PublishApplicationImages"
     actions = [
-      "ecr:GetAuthorizationToken",
       "ecr:BatchCheckLayerAvailability",
-      "ecr:GetDownloadUrlForLayer",
-      "ecr:GetRepositoryPolicy",
-      "ecr:DescribeRepositories",
-      "ecr:ListImages",
-      "ecr:DescribeImages",
       "ecr:BatchGetImage",
-      "ecr:InitiateLayerUpload",
-      "ecr:UploadLayerPart",
       "ecr:CompleteLayerUpload",
-      "ecr:PutImage"
+      "ecr:DescribeImages",
+      "ecr:DescribeRepositories",
+      "ecr:GetDownloadUrlForLayer",
+      "ecr:InitiateLayerUpload",
+      "ecr:ListImages",
+      "ecr:PutImage",
+      "ecr:UploadLayerPart",
     ]
-    resources = ["*"]
-  }
-
-  statement {
-    actions = [
-      "eks:DescribeCluster",
-      "eks:ListClusters"
-    ]
-    resources = ["*"]
+    resources = values(aws_ecr_repository.services)[*].arn
   }
 }
 
-resource "aws_iam_role_policy" "github_actions" {
-  name   = "github-actions-deploy-policy"
-  role   = aws_iam_role.github_actions.id
-  policy = data.aws_iam_policy_document.github_actions_policy.json
-}
-
-# Grant GitHub Actions role access to the EKS cluster
-resource "aws_eks_access_entry" "github_actions" {
-  cluster_name  = module.eks.cluster_name
-  principal_arn = aws_iam_role.github_actions.arn
-  type          = "STANDARD"
-}
-
-resource "aws_eks_access_policy_association" "github_actions" {
-  cluster_name  = module.eks.cluster_name
-  policy_arn    = "arn:aws:eks::aws:cluster-access-policy/AmazonEKSClusterAdminPolicy"
-  principal_arn = aws_iam_role.github_actions.arn
-
-  access_scope {
-    type = "cluster"
-  }
+resource "aws_iam_role_policy" "github_ecr_publisher" {
+  name   = "sports-store-ecr-publish"
+  role   = aws_iam_role.github_ecr_publisher.id
+  policy = data.aws_iam_policy_document.github_ecr_publisher.json
 }

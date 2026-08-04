@@ -47,3 +47,4 @@ output "aws_load_balancer_controller_iam_role_arn" {
   description = "IRSA IAM role ARN for AWS Load Balancer Controller"
   value       = module.aws_load_balancer_controller_irsa.arn
 }
+

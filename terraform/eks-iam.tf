@@ -32,3 +32,25 @@ module "aws_load_balancer_controller_irsa" {
 
   tags = local.common_tags
 }
+
+module "argocd_image_updater_irsa" {
+  source  = "terraform-aws-modules/iam/aws//modules/iam-role-for-service-accounts"
+  version = "~> 6.0"
+
+  name            = "${var.cluster_name}-argocd-image-updater"
+  use_name_prefix = false
+
+  oidc_providers = {
+    eks = {
+      provider_arn               = module.eks.oidc_provider_arn
+      namespace_service_accounts = ["argocd:argocd-image-updater"]
+    }
+  }
+
+  tags = local.common_tags
+}
+
+resource "aws_iam_role_policy_attachment" "argocd_image_updater_ecr_read" {
+  role       = "${var.cluster_name}-argocd-image-updater"
+  policy_arn = "arn:aws:iam::aws:policy/AmazonEC2ContainerRegistryReadOnly"
+}

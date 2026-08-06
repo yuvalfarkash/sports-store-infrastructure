@@ -73,6 +73,9 @@ locals {
     { for name in ["auth", "catalog", "cart", "order", "payment"] :
       "argocd-image-updater.argoproj.io/${name}.helm.image-tag" => "services.${name}.image.tag"
     },
+    { for name in ["frontend", "gateway", "auth", "catalog", "cart", "order", "payment"] :
+      "argocd-image-updater.argoproj.io/${name}.update-strategy" => "latest"
+    },
   )
 }
 

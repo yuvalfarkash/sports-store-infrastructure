@@ -30,7 +30,7 @@ resource "null_resource" "post_deploy" {
     command = <<-EOT
       set -euo pipefail
       echo "Applying Argo CD Application manifest to trigger sync..."
-      kubectl apply -f $(git rev-parse --show-toplevel)/sports-store-deployments/k8s/argocd-app.yaml
+      kubectl apply -f ../../sports-store-deployments/k8s/argocd-app.yaml
     EOT
   }
 }

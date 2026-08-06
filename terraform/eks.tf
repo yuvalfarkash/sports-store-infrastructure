@@ -57,8 +57,8 @@ module "eks" {
       ]
 
       min_size     = 1
-      max_size     = 9
-      desired_size = 9
+      max_size     = 12
+      desired_size = 12
     }
   }
 

@@ -5,12 +5,20 @@ set -euo pipefail
 INFRA_ROOT="$(git rev-parse --show-toplevel)"
 cd "$INFRA_ROOT/terraform"
 
+VPC_ID="$(terraform output -raw vpc_id 2>/dev/null || true)"
+
+echo "=== Deleting the ArgoCD Application first ==="
+# Its syncPolicy.automated.selfHeal will otherwise recreate the Ingress
+# (and therefore a brand-new ALB) the moment we delete it below - this bit
+# us for real: a self-healed Ingress got a fresh ALB mid-destroy, after the
+# AWS Load Balancer Controller that would have cleaned it up via finalizer
+# was already gone, leaving an orphaned ALB blocking VPC teardown. Deleting
+# the Application (not --cascade, no finalizer is set on it) only stops
+# ArgoCD from managing things going forward - it does not touch the actual
+# K8s resources, which is what we want since we handle the Ingress next.
+kubectl delete application sports-store -n argocd --ignore-not-found=true --wait=true --timeout=30s 2>/dev/null || true
+
 echo "=== Capturing ALB hostname(s) from any Ingress before deleting it ==="
-# The AWS Load Balancer Controller creates the ALB imperatively, outside
-# Terraform - it only tears it down via a finalizer that fires when the
-# Ingress is deleted while the controller is still running. Deleting the
-# Ingress first (and confirming the ALB is actually gone) avoids orphaning
-# it once `terraform destroy` uninstalls the controller.
 HOSTNAMES="$(kubectl get ingress -n default -o jsonpath='{.items[*].status.loadBalancer.ingress[*].hostname}' 2>/dev/null || true)"
 
 echo "=== Deleting Ingress(es) in the default namespace ==="
@@ -34,6 +42,23 @@ if [[ -n "$HOSTNAMES" ]]; then
   done
 else
   echo "No Ingress/ALB found - nothing to wait for."
+fi
+
+if [[ -n "$VPC_ID" ]]; then
+  echo "=== Removing any AWS Load Balancer Controller security groups left in $VPC_ID ==="
+  # These are created imperatively by the controller (not Terraform-managed),
+  # tagged elbv2.k8s.aws/cluster - if any survive, `terraform destroy` fails
+  # on the VPC itself with a DependencyViolation, only discoverable after a
+  # long retry loop. Clean them up proactively instead.
+  LEFTOVER_SGS="$(aws ec2 describe-security-groups \
+    --filters "Name=vpc-id,Values=${VPC_ID}" "Name=tag-key,Values=elbv2.k8s.aws/cluster" \
+    --query 'SecurityGroups[].GroupId' --output text 2>/dev/null || true)"
+  for SG in $LEFTOVER_SGS; do
+    echo "Deleting leftover security group $SG"
+    aws ec2 delete-security-group --group-id "$SG" 2>&1 || echo "  (couldn't delete $SG yet - terraform destroy may still clear its dependents first)"
+  done
+else
+  echo "=== Skipping leftover-SG check: could not read vpc_id output (already destroyed?) ==="
 fi
 
 echo "=== Running Terraform destroy ==="

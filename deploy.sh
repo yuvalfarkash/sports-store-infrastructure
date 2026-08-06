@@ -3,7 +3,7 @@ set -euo pipefail
 
 # Root of the infrastructure repo
 INFRA_ROOT="$(git rev-parse --show-toplevel)"
-cd "$INFRA_ROOT"
+cd "$INFRA_ROOT/terraform"
 
 echo "=== Running Terraform apply ==="
 terraform apply -auto-approve

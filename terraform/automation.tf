@@ -1,36 +1,97 @@
-resource "null_resource" "post_deploy" {
-  # Ensure this runs after the EKS cluster is provisioned
+# Bootstraps the cluster with the shared app-secrets Secret and the root
+# ArgoCD Application. Uses the kubernetes/kubectl providers (authenticated the
+# same way as the helm provider above) instead of local-exec + kubectl/aws CLI,
+# so this works the same way locally and under an HCP Terraform remote run —
+# and, unlike a null_resource, updates correctly on repeated applies instead
+# of only running once.
+
+resource "kubernetes_secret" "app_secrets" {
+  metadata {
+    name      = "app-secrets"
+    namespace = "default"
+  }
+
+  type = "Opaque"
+
+  data = {
+    "mongodb-root-password" = var.mongodb_root_password
+    "JWT_SECRET"            = var.jwt_secret
+  }
+
   depends_on = [module.eks]
+}
 
-  triggers = {
-    cluster_name = var.cluster_name
-    region       = var.aws_region
+locals {
+  # name -> ECR repository, matching the Helm chart's per-service value paths.
+  argocd_managed_images = {
+    frontend = "sports-store-frontend"
+    gateway  = "sports-store-gateway"
+    auth     = "sports-store-auth-service"
+    catalog  = "sports-store-catalog-service"
+    cart     = "sports-store-cart-service"
+    order    = "sports-store-order-service"
+    payment  = "sports-store-payment-service"
   }
 
-  provisioner "local-exec" {
-    command = <<-EOT
-      set -euo pipefail
-      echo "Updating kubeconfig for cluster ${var.cluster_name} in region ${var.aws_region}..."
-      aws eks update-kubeconfig --name ${var.cluster_name} --region ${var.aws_region}
-    EOT
-  }
+  argocd_image_list = join(",", [
+    for name, repo in local.argocd_managed_images :
+    "${name}=${local.account_id}.dkr.ecr.${var.aws_region}.amazonaws.com/${repo}"
+  ])
 
-  provisioner "local-exec" {
-    command = <<-EOT
-      set -euo pipefail
-      echo "Creating/Updating app-secrets in the cluster..."
-      kubectl create secret generic app-secrets \
-        --from-literal=mongodb-root-password=Gogoisgg \
-        --from-literal=JWT_SECRET=my-super-secret-key-12345 \
-        --dry-run=client -o yaml | kubectl apply -f -
-    EOT
-  }
+  argocd_app_annotations = merge(
+    {
+      "argocd-image-updater.argoproj.io/image-list"        = local.argocd_image_list
+      "argocd-image-updater.argoproj.io/write-back-method" = "argocd"
 
-  provisioner "local-exec" {
-    command = <<-EOT
-      set -euo pipefail
-      echo "Applying Argo CD Application manifest to trigger sync..."
-      kubectl apply -f ../../sports-store-deployments/k8s/argocd-app.yaml
-    EOT
-  }
+      "argocd-image-updater.argoproj.io/frontend.helm.image-name" = "frontend.image.repository"
+      "argocd-image-updater.argoproj.io/frontend.helm.image-tag"  = "frontend.image.tag"
+      "argocd-image-updater.argoproj.io/gateway.helm.image-name"  = "gateway.image.repository"
+      "argocd-image-updater.argoproj.io/gateway.helm.image-tag"   = "gateway.image.tag"
+    },
+    { for name in ["auth", "catalog", "cart", "order", "payment"] :
+      "argocd-image-updater.argoproj.io/${name}.helm.image-name" => "services.${name}.image.repository"
+    },
+    { for name in ["auth", "catalog", "cart", "order", "payment"] :
+      "argocd-image-updater.argoproj.io/${name}.helm.image-tag" => "services.${name}.image.tag"
+    },
+  )
+}
+
+# Root ArgoCD Application (app-of-apps bootstrap). This is the single source
+# of truth for what gets deployed — sports-store-deployments/k8s no longer
+# carries its own copy, so the two can't drift out of sync.
+resource "kubectl_manifest" "argocd_app" {
+  yaml_body = yamlencode({
+    apiVersion = "argoproj.io/v1alpha1"
+    kind       = "Application"
+    metadata = {
+      name        = "sports-store"
+      namespace   = "argocd"
+      annotations = local.argocd_app_annotations
+    }
+    spec = {
+      project = "default"
+      source = {
+        repoURL        = "https://github.com/${var.github_organization}/${var.deployments_repository}.git"
+        path           = "helm/sports-store"
+        targetRevision = "main"
+        helm = {
+          valueFiles = ["values.yaml", "values-aws.yaml"]
+        }
+      }
+      destination = {
+        server    = "https://kubernetes.default.svc"
+        namespace = "default"
+      }
+      syncPolicy = {
+        automated = {
+          prune    = true
+          selfHeal = true
+        }
+      }
+    }
+  })
+
+  # The Application CRD only exists once ArgoCD itself is installed.
+  depends_on = [helm_release.argocd]
 }

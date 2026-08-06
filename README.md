@@ -9,7 +9,7 @@ Terraform in `terraform/` defines the Milestone 4 AWS foundation for Sports Stor
 - Two private subnets tagged for internal load balancers
 - One shared NAT Gateway for the course environment
 - An EKS 1.34 cluster with a public API endpoint
-- One managed node group using `AL2023_x86_64_STANDARD` and `t3.large`
+- One managed node group using `AL2023_x86_64_STANDARD` and `t3.micro`, sized for the course budget rather than headroom — ArgoCD, the AWS Load Balancer Controller, and argocd-image-updater are all trimmed down in `helm.tf` (HA replicas/unused components disabled, conservative resource requests) to fit
 - EKS-managed CoreDNS, kube-proxy, VPC CNI, and EBS CSI add-ons
 - Dedicated IRSA roles for EBS CSI and AWS Load Balancer Controller
 - Seven immutable, scan-on-push ECR repositories
@@ -81,4 +81,4 @@ Remove application releases and externally managed load balancers before infrast
 
 EKS, the NAT Gateway, EC2 managed-node instances, EBS volumes, load balancers, and data transfer can incur charges. A shared NAT Gateway reduces course-environment cost but is not highly available across availability zones. Monitor usage and destroy resources when they are no longer required.
 
-At the configured desired capacity, expect one chargeable EKS control plane, one NAT Gateway, two `t3.large` EC2 nodes and their root EBS volumes, ECR image storage, and application EBS volumes such as the MongoDB PVC. Deploying the AWS Load Balancer Controller and application Ingress later can create one ALB plus related data-processing charges. Actual counts can change through autoscaling, upgrades, retained volumes, and workload configuration.
+At the configured desired capacity, expect one chargeable EKS control plane, one NAT Gateway, up to six `t3.micro` EC2 nodes and their root EBS volumes, ECR image storage, and application EBS volumes such as the MongoDB PVC. Deploying the AWS Load Balancer Controller and application Ingress later can create one ALB plus related data-processing charges. Actual counts can change through autoscaling, upgrades, retained volumes, and workload configuration.

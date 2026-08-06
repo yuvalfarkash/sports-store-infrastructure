@@ -35,6 +35,28 @@ resource "helm_release" "aws_load_balancer_controller" {
     value = "eu-central-1"
   }
 
+  # A single controller replica is enough for this cluster and halves its
+  # footprint on the t3.micro node group (chart default is 2, for HA).
+  set {
+    name  = "replicaCount"
+    value = "1"
+  }
+
+  set {
+    name  = "resources.requests.cpu"
+    value = "20m"
+  }
+
+  set {
+    name  = "resources.requests.memory"
+    value = "64Mi"
+  }
+
+  set {
+    name  = "resources.limits.memory"
+    value = "128Mi"
+  }
+
   # Ensure the helm release happens after EKS cluster is fully ready
   depends_on = [
     module.eks
@@ -49,6 +71,42 @@ resource "helm_release" "argocd" {
   create_namespace = true
   version          = "7.4.4"
 
+  # This cluster has one static Application (see automation.tf) with no SSO —
+  # Dex, notifications and the ApplicationSet controller are unused pods that
+  # only eat into the t3.micro node group's tight allocatable memory.
+  # Requests/limits below are sized for that same constraint.
+  values = [
+    yamlencode({
+      dex            = { enabled = false }
+      notifications  = { enabled = false }
+      applicationSet = { enabled = false }
+      controller = {
+        resources = {
+          requests = { cpu = "50m", memory = "128Mi" }
+          limits   = { memory = "256Mi" }
+        }
+      }
+      repoServer = {
+        resources = {
+          requests = { cpu = "30m", memory = "96Mi" }
+          limits   = { memory = "192Mi" }
+        }
+      }
+      server = {
+        resources = {
+          requests = { cpu = "30m", memory = "64Mi" }
+          limits   = { memory = "128Mi" }
+        }
+      }
+      redis = {
+        resources = {
+          requests = { cpu = "20m", memory = "32Mi" }
+          limits   = { memory = "64Mi" }
+        }
+      }
+    })
+  ]
+
   # Ensure the helm release happens after EKS cluster is fully ready
   depends_on = [
     module.eks
@@ -56,37 +114,37 @@ resource "helm_release" "argocd" {
 }
 
 resource "helm_release" "argocd_image_updater" {
-  name             = "argocd-image-updater"
-  repository       = "https://argoproj.github.io/argo-helm"
-  chart            = "argocd-image-updater"
-  namespace        = "argocd"
-  version          = "0.10.0"
+  name       = "argocd-image-updater"
+  repository = "https://argoproj.github.io/argo-helm"
+  chart      = "argocd-image-updater"
+  namespace  = "argocd"
+  version    = "0.10.0"
 
   set {
     name  = "serviceAccount.annotations.eks\\.amazonaws\\.com/role-arn"
     value = module.argocd_image_updater_irsa.arn
   }
-  
+
   set {
     name  = "config.registries[0].name"
     value = "ECR"
   }
-  
+
   set {
     name  = "config.registries[0].api_url"
-    value = "https://324621154117.dkr.ecr.eu-central-1.amazonaws.com"
+    value = "https://${local.account_id}.dkr.ecr.${var.aws_region}.amazonaws.com"
   }
-  
+
   set {
     name  = "config.registries[0].prefix"
-    value = "324621154117.dkr.ecr.eu-central-1.amazonaws.com"
+    value = "${local.account_id}.dkr.ecr.${var.aws_region}.amazonaws.com"
   }
-  
+
   set {
     name  = "config.registries[0].credentials"
     value = "ext:/scripts/ecr-login.sh"
   }
-  
+
   set {
     name  = "config.registries[0].credsexpire"
     value = "10h"
@@ -97,13 +155,15 @@ resource "helm_release" "argocd_image_updater" {
       authScripts = {
         enabled = true
         scripts = {
-          "ecr-login.sh" = "#!/bin/sh\nHOME=/tmp aws ecr get-login-password --region eu-central-1 | awk '{print \"AWS:\" $1}'\n"
+          "ecr-login.sh" = "#!/bin/sh\nHOME=/tmp aws ecr get-login-password --region ${var.aws_region} | awk '{print \"AWS:\" $1}'\n"
         }
+      }
+      resources = {
+        requests = { cpu = "10m", memory = "32Mi" }
+        limits   = { memory = "64Mi" }
       }
     })
   ]
-  
-
 
   depends_on = [
     helm_release.argocd

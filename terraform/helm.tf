@@ -71,15 +71,16 @@ resource "helm_release" "argocd" {
   create_namespace = true
   version          = "7.4.4"
 
-  # This cluster has one static Application (see automation.tf) with no SSO —
-  # Dex, notifications and the ApplicationSet controller are unused pods that
-  # only eat into the t3.micro node group's tight allocatable memory.
-  # Requests/limits below are sized for that same constraint.
+  # This cluster has one static Application (see automation.tf) with no SSO,
+  # so Dex and notifications are disabled - both unused pods that only eat
+  # into the t3.micro node group's tight allocatable memory. The chart (7.4.4)
+  # has no equivalent toggle for the ApplicationSet controller - its Deployment
+  # template is unconditional - so that pod stays; it's small on its own.
+  # Requests/limits below are sized for the t3.micro constraint.
   values = [
     yamlencode({
-      dex            = { enabled = false }
-      notifications  = { enabled = false }
-      applicationSet = { enabled = false }
+      dex           = { enabled = false }
+      notifications = { enabled = false }
       controller = {
         resources = {
           requests = { cpu = "50m", memory = "128Mi" }
@@ -158,9 +159,12 @@ resource "helm_release" "argocd_image_updater" {
           "ecr-login.sh" = "#!/bin/sh\nHOME=/tmp aws ecr get-login-password --region ${var.aws_region} | awk '{print \"AWS:\" $1}'\n"
         }
       }
+      # The authScript spawns `aws` (python/botocore) as a subprocess on top
+      # of the controller's own baseline - 64Mi was too tight and made that
+      # subprocess slow enough to blow the script's fixed 10s timeout.
       resources = {
-        requests = { cpu = "10m", memory = "32Mi" }
-        limits   = { memory = "64Mi" }
+        requests = { cpu = "20m", memory = "64Mi" }
+        limits   = { memory = "160Mi" }
       }
     })
   ]

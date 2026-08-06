@@ -5,6 +5,19 @@
 # and, unlike a null_resource, updates correctly on repeated applies instead
 # of only running once.
 
+locals {
+  # db name per service, matching what's already provisioned in MongoDB -
+  # see sports-store-deployments/k8s/secrets/app-secrets.yaml for the origin
+  # of this convention.
+  mongo_db_by_service = {
+    AUTH_MONGO_URI    = "auth_db"
+    CATALOG_MONGO_URI = "catalog_db"
+    CART_MONGO_URI    = "cart_db"
+    ORDER_MONGO_URI   = "order_db"
+    PAYMENT_MONGO_URI = "payment_db"
+  }
+}
+
 resource "kubernetes_secret" "app_secrets" {
   metadata {
     name      = "app-secrets"
@@ -13,10 +26,16 @@ resource "kubernetes_secret" "app_secrets" {
 
   type = "Opaque"
 
-  data = {
-    "mongodb-root-password" = var.mongodb_root_password
-    "JWT_SECRET"            = var.jwt_secret
-  }
+  data = merge(
+    {
+      "mongodb-root-password" = var.mongodb_root_password
+      "JWT_SECRET"            = var.jwt_secret
+    },
+    {
+      for key, db in local.mongo_db_by_service :
+      key => "mongodb://root:${var.mongodb_root_password}@sports-store-mongodb:27017/${db}?authSource=admin"
+    },
+  )
 
   depends_on = [module.eks]
 }

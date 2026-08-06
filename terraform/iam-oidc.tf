@@ -25,9 +25,9 @@ data "aws_iam_policy_document" "github_ecr_publisher_assume_role" {
     }
 
     condition {
-      test     = "StringEquals"
+      test     = "StringLike"
       variable = "token.actions.githubusercontent.com:sub"
-      values   = local.github_main_branch_subjects
+      values   = ["repo:${var.github_organization}/sports-store-*:*"]
     }
   }
 }

@@ -64,5 +64,22 @@ module "eks" {
 
   enable_cluster_creator_admin_permissions = true
 
+  # Without this, the module's default node SG only opens node-to-node
+  # traffic on ephemeral ports (1025-65535) plus a handful of specific
+  # control-plane webhook ports - it has no rule for pod-to-pod traffic on
+  # fixed ports like the gateway/frontend's 80, so cross-node requests
+  # between pods time out silently (kubelet's own liveness/readiness probes
+  # are always same-node, so pods still show Running/Ready and hide this).
+  node_security_group_additional_rules = {
+    ingress_self_all = {
+      description = "Node to node all ports/protocols (pod-to-pod across nodes)"
+      protocol    = "-1"
+      from_port   = 0
+      to_port     = 0
+      type        = "ingress"
+      self        = true
+    }
+  }
+
   tags = local.common_tags
 }

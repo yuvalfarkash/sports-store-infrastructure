@@ -2,13 +2,6 @@ data "aws_iam_openid_connect_provider" "github" {
   url = "https://token.actions.githubusercontent.com"
 }
 
-locals {
-  github_main_branch_subjects = [
-    for repository in var.github_repositories :
-    "repo:${var.github_organization}/${repository}:ref:refs/heads/main"
-  ]
-}
-
 data "aws_iam_policy_document" "github_ecr_publisher_assume_role" {
   statement {
     actions = ["sts:AssumeRoleWithWebIdentity"]
@@ -27,7 +20,16 @@ data "aws_iam_policy_document" "github_ecr_publisher_assume_role" {
     condition {
       test     = "StringLike"
       variable = "token.actions.githubusercontent.com:sub"
-      values   = ["repo:${var.github_organization}/sports-store-*:*"]
+      # This org has GitHub's subject-claim customization on, which appends
+      # numeric org/repo IDs to the sub claim
+      # (repo:ORG@<org_id>/REPO@<repo_id>:ref:...) instead of the plain
+      # repo:ORG/REPO:ref:... format. Match both so this doesn't silently
+      # break again if that setting changes - verified the actual claim via
+      # CloudTrail (Username field on the AssumeRoleWithWebIdentity event).
+      values = [
+        "repo:${var.github_organization}/sports-store-*:*",
+        "repo:${var.github_organization}@*/sports-store-*:*",
+      ]
     }
   }
 }

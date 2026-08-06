@@ -1,6 +1,6 @@
 resource "null_resource" "post_deploy" {
   # Ensure this runs after the EKS cluster is provisioned
-  depends_on = [module.eks]
+  depends_on = [module.eks, helm_release.argocd]
 
   triggers = {
     cluster_name = var.cluster_name

@@ -40,3 +40,17 @@ resource "helm_release" "aws_load_balancer_controller" {
     module.eks
   ]
 }
+
+resource "helm_release" "argocd" {
+  name             = "argocd"
+  repository       = "https://argoproj.github.io/argo-helm"
+  chart            = "argo-cd"
+  namespace        = "argocd"
+  create_namespace = true
+  version          = "7.4.4"
+
+  # Ensure the helm release happens after EKS cluster is fully ready
+  depends_on = [
+    module.eks
+  ]
+}

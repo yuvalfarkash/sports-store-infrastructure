@@ -51,6 +51,7 @@ module "argocd_image_updater_irsa" {
 }
 
 resource "aws_iam_role_policy_attachment" "argocd_image_updater_ecr_read" {
-  role       = module.argocd_image_updater_irsa.iam_role_name
+  role       = "${var.cluster_name}-argocd-image-updater"
   policy_arn = "arn:aws:iam::aws:policy/AmazonEC2ContainerRegistryReadOnly"
+  depends_on = [module.argocd_image_updater_irsa]
 }

@@ -92,6 +92,19 @@ resource "helm_release" "argocd_image_updater" {
     value = "10h"
   }
 
+  values = [
+    yamlencode({
+      authScripts = {
+        enabled = true
+        scripts = {
+          "ecr-login.sh" = "#!/bin/sh\nHOME=/tmp aws ecr get-login-password --region eu-central-1 | awk '{print \"AWS:\" $1}'\n"
+        }
+      }
+    })
+  ]
+  
+
+
   depends_on = [
     helm_release.argocd
   ]

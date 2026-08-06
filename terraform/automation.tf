@@ -114,3 +114,56 @@ resource "kubectl_manifest" "argocd_app" {
   # The Application CRD only exists once ArgoCD itself is installed.
   depends_on = [helm_release.argocd]
 }
+
+resource "kubectl_manifest" "argocd_monitoring_app" {
+  yaml_body = yamlencode({
+    apiVersion = "argoproj.io/v1alpha1"
+    kind       = "Application"
+    metadata = {
+      name        = "sports-store-monitoring"
+      namespace   = "argocd"
+      annotations = {
+        "argocd.argoproj.io/sync-wave" = "0"
+      }
+    }
+    spec = {
+      project = "default"
+      sources = [
+        {
+          repoURL        = "https://prometheus-community.github.io/helm-charts"
+          chart          = "kube-prometheus-stack"
+          targetRevision = "88.1.5"
+          helm = {
+            releaseName = "monitoring"
+            valueFiles  = ["$values/monitoring/values.yaml"]
+          }
+        },
+        {
+          repoURL        = "https://github.com/${var.github_organization}/${var.deployments_repository}.git"
+          targetRevision = "main"
+          ref            = "values"
+        },
+        {
+          repoURL        = "https://github.com/${var.github_organization}/${var.deployments_repository}.git"
+          targetRevision = "main"
+          path           = "monitoring/resources"
+        }
+      ]
+      destination = {
+        server    = "https://kubernetes.default.svc"
+        namespace = "monitoring"
+      }
+      syncPolicy = {
+        automated = {
+          prune    = true
+          selfHeal = true
+        }
+        syncOptions = [
+          "CreateNamespace=true",
+          "ServerSideApply=true"
+        ]
+      }
+    }
+  })
+  depends_on = [helm_release.argocd]
+}

@@ -28,7 +28,7 @@ for REPO in "${REPOS[@]}"; do
   # Use GitHub CLI to dispatch the workflow; assumes the workflow file is .github/workflows/ci.yml
   # The workflow can be triggered via a repository_dispatch event or by running the workflow directly.
   # Here we use the "gh workflow run" command which requires the workflow name (ci.yml) and the ref.
-  gh workflow run ci.yml -R "$ORG/$REPO" -f ref=main || echo "Failed to trigger CI for $REPO"
+  gh workflow run ci.yml -R "$ORG/$REPO" --ref main || echo "Failed to trigger CI for $REPO"
 done
 
 echo "All triggers dispatched."

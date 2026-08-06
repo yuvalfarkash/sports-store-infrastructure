@@ -25,8 +25,7 @@ module "eks" {
       before_compute = true
       configuration_values = jsonencode({
         env = {
-          ENABLE_PREFIX_DELEGATION = "true"
-          WARM_PREFIX_TARGET       = "1"
+          ENABLE_PREFIX_DELEGATION = "false"
         }
       })
     }

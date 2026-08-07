@@ -9,6 +9,8 @@ Terraform in `terraform/` defines the Milestone 4 AWS foundation for Sports Stor
 - Two private subnets tagged for internal load balancers
 - One shared NAT Gateway for the course environment
 - An EKS 1.34 cluster with a public API endpoint
+- EKS `api`, `audit`, and `authenticator` control-plane logs retained in
+  CloudWatch Logs for seven days
 - One managed node group using `AL2023_x86_64_STANDARD` and `t3.large`
 - EKS-managed CoreDNS, kube-proxy, VPC CNI, and EBS CSI add-ons
 - Dedicated IRSA roles for EBS CSI and AWS Load Balancer Controller
@@ -16,6 +18,12 @@ Terraform in `terraform/` defines the Milestone 4 AWS foundation for Sports Stor
 - A GitHub Actions OIDC role limited to ECR publishing from approved `main` branches
 
 All Terraform-managed AWS resources receive the `Project=sports-store`, `Environment=dev`, and `ManagedBy=terraform` tags where AWS supports tagging.
+
+CloudWatch is deliberately limited to EKS control-plane activity. Application
+and NGINX stdout logs belong in the GitOps-managed Loki stack, so this
+infrastructure does not install Container Insights, CloudWatch Agent, Fluent
+Bit, or the `amazon-cloudwatch-observability` add-on. CloudWatch audit and API
+records complement Loki workload logs; neither source replaces the other.
 
 ## Required tools
 

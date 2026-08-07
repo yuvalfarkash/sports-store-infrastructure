@@ -56,37 +56,37 @@ resource "helm_release" "argocd" {
 }
 
 resource "helm_release" "argocd_image_updater" {
-  name             = "argocd-image-updater"
-  repository       = "https://argoproj.github.io/argo-helm"
-  chart            = "argocd-image-updater"
-  namespace        = "argocd"
-  version          = "0.10.0"
+  name       = "argocd-image-updater"
+  repository = "https://argoproj.github.io/argo-helm"
+  chart      = "argocd-image-updater"
+  namespace  = "argocd"
+  version    = "0.10.0"
 
   set {
     name  = "serviceAccount.annotations.eks\\.amazonaws\\.com/role-arn"
     value = module.argocd_image_updater_irsa.arn
   }
-  
+
   set {
     name  = "config.registries[0].name"
     value = "ECR"
   }
-  
+
   set {
     name  = "config.registries[0].api_url"
     value = "https://324621154117.dkr.ecr.eu-central-1.amazonaws.com"
   }
-  
+
   set {
     name  = "config.registries[0].prefix"
     value = "324621154117.dkr.ecr.eu-central-1.amazonaws.com"
   }
-  
+
   set {
     name  = "config.registries[0].credentials"
     value = "ext:/scripts/ecr-login.sh"
   }
-  
+
   set {
     name  = "config.registries[0].credsexpire"
     value = "10h"
@@ -102,7 +102,7 @@ resource "helm_release" "argocd_image_updater" {
       }
     })
   ]
-  
+
 
 
   depends_on = [

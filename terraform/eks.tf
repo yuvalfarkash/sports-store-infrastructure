@@ -9,6 +9,12 @@ module "eks" {
   endpoint_private_access = true
   enable_irsa             = true
 
+  # Keep only the security- and API-relevant EKS control-plane logs. Workload
+  # stdout is collected by Alloy/Loki instead of a second CloudWatch agent.
+  enabled_log_types                      = ["api", "audit", "authenticator"]
+  create_cloudwatch_log_group            = true
+  cloudwatch_log_group_retention_in_days = 7
+
   vpc_id                   = module.vpc.vpc_id
   subnet_ids               = module.vpc.private_subnets
   control_plane_subnet_ids = module.vpc.private_subnets

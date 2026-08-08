@@ -19,10 +19,10 @@ echo "=== Deleting the ArgoCD Application first ==="
 kubectl delete application sports-store -n argocd --ignore-not-found=true --wait=true --timeout=30s 2>/dev/null || true
 
 echo "=== Capturing ALB hostname(s) from any Ingress before deleting it ==="
-HOSTNAMES="$(kubectl get ingress -n default -o jsonpath='{.items[*].status.loadBalancer.ingress[*].hostname}' 2>/dev/null || true)"
+HOSTNAMES="$(kubectl get ingress -n sports-store -o jsonpath='{.items[*].status.loadBalancer.ingress[*].hostname}' 2>/dev/null || true)"
 
-echo "=== Deleting Ingress(es) in the default namespace ==="
-kubectl delete ingress --all -n default --ignore-not-found=true
+echo "=== Deleting Ingress(es) in the sports-store namespace ==="
+kubectl delete ingress --all -n sports-store --ignore-not-found=true
 
 if [[ -n "$HOSTNAMES" ]]; then
   echo "=== Waiting for the ALB(s) to actually disappear: $HOSTNAMES ==="

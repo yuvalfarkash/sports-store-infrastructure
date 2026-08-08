@@ -69,15 +69,3 @@ variable "teammate_iam_arns" {
     "arn:aws:iam::324621154117:user/Daniel-sport",
   ]
 }
-
-variable "mongodb_root_password" {
-  description = "Root password for the Bitnami MongoDB chart's admin user. Supply through the HCP Terraform variable set (marked sensitive) or a gitignored *.auto.tfvars file — never commit a real value here."
-  type        = string
-  sensitive   = true
-}
-
-variable "jwt_secret" {
-  description = "Shared HS256 signing secret every backend service trusts to verify each other's JWTs. Supply through the HCP Terraform variable set (marked sensitive) or a gitignored *.auto.tfvars file — never commit a real value here."
-  type        = string
-  sensitive   = true
-}

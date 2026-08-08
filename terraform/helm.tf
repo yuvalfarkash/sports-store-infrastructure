@@ -63,6 +63,32 @@ resource "helm_release" "aws_load_balancer_controller" {
   ]
 }
 
+resource "helm_release" "external_secrets" {
+  name       = "external-secrets"
+  repository = "https://charts.external-secrets.io"
+  chart      = "external-secrets"
+  namespace  = kubernetes_namespace_v1.external_secrets.metadata[0].name
+  version    = "2.8.0"
+
+  values = [
+    yamlencode({
+      installCRDs = true
+      serviceAccount = {
+        create = true
+        name   = local.external_secrets_service_account
+        annotations = {
+          "eks.amazonaws.com/role-arn" = aws_iam_role.external_secrets.arn
+        }
+      }
+    })
+  ]
+
+  depends_on = [
+    kubernetes_namespace_v1.external_secrets,
+    aws_iam_role_policy.external_secrets,
+  ]
+}
+
 resource "helm_release" "argocd" {
   name             = "argocd"
   repository       = "https://argoproj.github.io/argo-helm"

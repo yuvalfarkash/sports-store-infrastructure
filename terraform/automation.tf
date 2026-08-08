@@ -1,22 +1,6 @@
-# Bootstraps the cluster with the shared app-secrets Secret and the root
-# ArgoCD Application. Uses the kubernetes/kubectl providers (authenticated the
-# same way as the helm provider above) instead of local-exec + kubectl/aws CLI,
-# so this works the same way locally and under an HCP Terraform remote run —
-# and, unlike a null_resource, updates correctly on repeated applies instead
-# of only running once.
-
-locals {
-  # db name per service, matching what's already provisioned in MongoDB -
-  # see sports-store-deployments/k8s/secrets/app-secrets.yaml for the origin
-  # of this convention.
-  mongo_db_by_service = {
-    AUTH_MONGO_URI    = "auth_db"
-    CATALOG_MONGO_URI = "catalog_db"
-    CART_MONGO_URI    = "cart_db"
-    ORDER_MONGO_URI   = "order_db"
-    PAYMENT_MONGO_URI = "payment_db"
-  }
-}
+# Bootstraps the application namespace and root ArgoCD Application. Application
+# secret values are synchronized by External Secrets Operator and are never
+# supplied to the Terraform configuration or stored in Terraform state.
 
 resource "kubernetes_namespace_v1" "sports_store" {
   metadata {
@@ -24,28 +8,6 @@ resource "kubernetes_namespace_v1" "sports_store" {
   }
 
   depends_on = [module.eks]
-}
-
-resource "kubernetes_secret" "app_secrets" {
-  metadata {
-    name      = "app-secrets"
-    namespace = kubernetes_namespace_v1.sports_store.metadata[0].name
-  }
-
-  type = "Opaque"
-
-  data = merge(
-    {
-      "mongodb-root-password" = var.mongodb_root_password
-      "JWT_SECRET"            = var.jwt_secret
-    },
-    {
-      for key, db in local.mongo_db_by_service :
-      key => "mongodb://root:${var.mongodb_root_password}@sports-store-mongodb:27017/${db}?authSource=admin"
-    },
-  )
-
-  depends_on = [kubernetes_namespace_v1.sports_store]
 }
 
 locals {
@@ -104,7 +66,7 @@ resource "kubectl_manifest" "argocd_app" {
       source = {
         repoURL        = "https://github.com/${var.github_organization}/${var.deployments_repository}.git"
         path           = "helm/sports-store"
-        targetRevision = "main"
+        targetRevision = "dev-branch"
         helm = {
           valueFiles = ["values.yaml", "values-aws.yaml"]
         }
@@ -125,7 +87,8 @@ resource "kubectl_manifest" "argocd_app" {
   # The Application CRD only exists once ArgoCD itself is installed.
   depends_on = [
     helm_release.argocd,
-    kubernetes_secret.app_secrets,
+    helm_release.external_secrets,
+    kubernetes_namespace_v1.sports_store,
   ]
 }
 

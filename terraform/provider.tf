@@ -46,8 +46,8 @@ locals {
 }
 
 # EKS auth is shared across the helm, kubernetes, and kubectl providers so that
-# cluster resources (ArgoCD, the app-secrets Secret, the bootstrap Application)
-# can be created in the same apply as the cluster, without a local kubeconfig.
+# cluster resources (operators, namespaces, and bootstrap Applications) can be
+# created in the same apply as the cluster, without a local kubeconfig.
 locals {
   eks_exec = {
     api_version = "client.authentication.k8s.io/v1beta1"

@@ -8,6 +8,14 @@ cd "$INFRA_ROOT/terraform"
 echo "=== Running Terraform apply ==="
 terraform apply -auto-approve
 
+printf '%s\n' \
+  '=== Application secret bootstrap is manual ===' \
+  'Terraform created the AWS Secrets Manager container but did not create a secret version.' \
+  'From the repository root, verify identity and status, then populate the first version:' \
+  '  bash scripts/bootstrap-application-secrets.sh --check' \
+  '  bash scripts/bootstrap-application-secrets.sh' \
+  'Do not use --rotate during a normal deployment.'
+
 # List of microservice repositories (same as var.github_repositories)
 REPOS=(
   "sports-store-frontend"

@@ -48,3 +48,18 @@ output "aws_load_balancer_controller_iam_role_arn" {
   value       = module.aws_load_balancer_controller_irsa.arn
 }
 
+output "application_secret_name" {
+  description = "Name of the AWS Secrets Manager container for application secrets"
+  value       = aws_secretsmanager_secret.application.name
+}
+
+output "application_secret_arn" {
+  description = "ARN of the AWS Secrets Manager container for application secrets"
+  value       = aws_secretsmanager_secret.application.arn
+}
+
+output "external_secrets_iam_role_arn" {
+  description = "IRSA IAM role ARN for External Secrets Operator"
+  value       = aws_iam_role.external_secrets.arn
+}
+

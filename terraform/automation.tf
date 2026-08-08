@@ -18,10 +18,18 @@ locals {
   }
 }
 
+resource "kubernetes_namespace_v1" "sports_store" {
+  metadata {
+    name = "sports-store"
+  }
+
+  depends_on = [module.eks]
+}
+
 resource "kubernetes_secret" "app_secrets" {
   metadata {
     name      = "app-secrets"
-    namespace = "default"
+    namespace = kubernetes_namespace_v1.sports_store.metadata[0].name
   }
 
   type = "Opaque"
@@ -37,7 +45,7 @@ resource "kubernetes_secret" "app_secrets" {
     },
   )
 
-  depends_on = [module.eks]
+  depends_on = [kubernetes_namespace_v1.sports_store]
 }
 
 locals {
@@ -103,7 +111,7 @@ resource "kubectl_manifest" "argocd_app" {
       }
       destination = {
         server    = "https://kubernetes.default.svc"
-        namespace = "default"
+        namespace = kubernetes_namespace_v1.sports_store.metadata[0].name
       }
       syncPolicy = {
         automated = {
@@ -115,7 +123,10 @@ resource "kubectl_manifest" "argocd_app" {
   })
 
   # The Application CRD only exists once ArgoCD itself is installed.
-  depends_on = [helm_release.argocd]
+  depends_on = [
+    helm_release.argocd,
+    kubernetes_secret.app_secrets,
+  ]
 }
 
 resource "kubectl_manifest" "argocd_monitoring_app" {

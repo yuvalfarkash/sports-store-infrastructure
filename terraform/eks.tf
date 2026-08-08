@@ -9,8 +9,8 @@ module "eks" {
   endpoint_private_access = true
   enable_irsa             = true
 
-  # Keep only the security- and API-relevant EKS control-plane logs. Workload
-  # stdout is collected by Alloy/Loki instead of a second CloudWatch agent.
+  # CloudWatch collects EKS control-plane logs only. Workload log collection
+  # is deferred because Loki and Alloy are disabled for the current cluster size.
   enabled_log_types                      = ["api", "audit", "authenticator"]
   create_cloudwatch_log_group            = true
   cloudwatch_log_group_retention_in_days = 7
@@ -31,8 +31,7 @@ module "eks" {
       before_compute = true
       configuration_values = jsonencode({
         env = {
-          ENABLE_PREFIX_DELEGATION = "true"
-          WARM_PREFIX_TARGET       = "1"
+          ENABLE_PREFIX_DELEGATION = "false"
         }
       })
     }
@@ -63,12 +62,29 @@ module "eks" {
       ]
 
       min_size     = 1
-      max_size     = 6
-      desired_size = 6
+      max_size     = 12
+      desired_size = 12
     }
   }
 
   enable_cluster_creator_admin_permissions = true
+
+  # Without this, the module's default node SG only opens node-to-node
+  # traffic on ephemeral ports (1025-65535) plus a handful of specific
+  # control-plane webhook ports - it has no rule for pod-to-pod traffic on
+  # fixed ports like the gateway/frontend's 80, so cross-node requests
+  # between pods time out silently (kubelet's own liveness/readiness probes
+  # are always same-node, so pods still show Running/Ready and hide this).
+  node_security_group_additional_rules = {
+    ingress_self_all = {
+      description = "Node to node all ports/protocols (pod-to-pod across nodes)"
+      protocol    = "-1"
+      from_port   = 0
+      to_port     = 0
+      type        = "ingress"
+      self        = true
+    }
+  }
 
   tags = local.common_tags
 }

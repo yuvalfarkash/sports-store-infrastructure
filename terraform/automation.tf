@@ -1,36 +1,172 @@
-resource "null_resource" "post_deploy" {
-  # Ensure this runs after the EKS cluster is provisioned
+# Bootstraps the cluster with the shared app-secrets Secret and the root
+# ArgoCD Application. Uses the kubernetes/kubectl providers (authenticated the
+# same way as the helm provider above) instead of local-exec + kubectl/aws CLI,
+# so this works the same way locally and under an HCP Terraform remote run —
+# and, unlike a null_resource, updates correctly on repeated applies instead
+# of only running once.
+
+locals {
+  # db name per service, matching what's already provisioned in MongoDB -
+  # see sports-store-deployments/k8s/secrets/app-secrets.yaml for the origin
+  # of this convention.
+  mongo_db_by_service = {
+    AUTH_MONGO_URI    = "auth_db"
+    CATALOG_MONGO_URI = "catalog_db"
+    CART_MONGO_URI    = "cart_db"
+    ORDER_MONGO_URI   = "order_db"
+    PAYMENT_MONGO_URI = "payment_db"
+  }
+}
+
+resource "kubernetes_secret" "app_secrets" {
+  metadata {
+    name      = "app-secrets"
+    namespace = "default"
+  }
+
+  type = "Opaque"
+
+  data = merge(
+    {
+      "mongodb-root-password" = var.mongodb_root_password
+      "JWT_SECRET"            = var.jwt_secret
+    },
+    {
+      for key, db in local.mongo_db_by_service :
+      key => "mongodb://root:${var.mongodb_root_password}@sports-store-mongodb:27017/${db}?authSource=admin"
+    },
+  )
+
   depends_on = [module.eks]
+}
 
-  triggers = {
-    cluster_name = var.cluster_name
-    region       = var.aws_region
+locals {
+  # name -> ECR repository, matching the Helm chart's per-service value paths.
+  argocd_managed_images = {
+    frontend = "sports-store-frontend"
+    gateway  = "sports-store-gateway"
+    auth     = "sports-store-auth-service"
+    catalog  = "sports-store-catalog-service"
+    cart     = "sports-store-cart-service"
+    order    = "sports-store-order-service"
+    payment  = "sports-store-payment-service"
   }
 
-  provisioner "local-exec" {
-    command = <<-EOT
-      set -euo pipefail
-      echo "Updating kubeconfig for cluster ${var.cluster_name} in region ${var.aws_region}..."
-      aws eks update-kubeconfig --name ${var.cluster_name} --region ${var.aws_region}
-    EOT
-  }
+  argocd_image_list = join(",", [
+    for name, repo in local.argocd_managed_images :
+    "${name}=${local.account_id}.dkr.ecr.${var.aws_region}.amazonaws.com/${repo}"
+  ])
 
-  provisioner "local-exec" {
-    command = <<-EOT
-      set -euo pipefail
-      echo "Creating/Updating app-secrets in the cluster..."
-      kubectl create secret generic app-secrets \
-        --from-literal=mongodb-root-password=Gogoisgg \
-        --from-literal=JWT_SECRET=my-super-secret-key-12345 \
-        --dry-run=client -o yaml | kubectl apply -f -
-    EOT
-  }
+  argocd_app_annotations = merge(
+    {
+      "argocd-image-updater.argoproj.io/image-list"        = local.argocd_image_list
+      "argocd-image-updater.argoproj.io/write-back-method" = "argocd"
 
-  provisioner "local-exec" {
-    command = <<-EOT
-      set -euo pipefail
-      echo "Applying Argo CD Application manifest to trigger sync..."
-      kubectl apply -f ../../sports-store-deployments/k8s/argocd-app.yaml
-    EOT
-  }
+      "argocd-image-updater.argoproj.io/frontend.helm.image-name" = "frontend.image.repository"
+      "argocd-image-updater.argoproj.io/frontend.helm.image-tag"  = "frontend.image.tag"
+      "argocd-image-updater.argoproj.io/gateway.helm.image-name"  = "gateway.image.repository"
+      "argocd-image-updater.argoproj.io/gateway.helm.image-tag"   = "gateway.image.tag"
+    },
+    { for name in ["auth", "catalog", "cart", "order", "payment"] :
+      "argocd-image-updater.argoproj.io/${name}.helm.image-name" => "services.${name}.image.repository"
+    },
+    { for name in ["auth", "catalog", "cart", "order", "payment"] :
+      "argocd-image-updater.argoproj.io/${name}.helm.image-tag" => "services.${name}.image.tag"
+    },
+    { for name in ["frontend", "gateway", "auth", "catalog", "cart", "order", "payment"] :
+      "argocd-image-updater.argoproj.io/${name}.update-strategy" => "latest"
+    },
+  )
+}
+
+# Root ArgoCD Application (app-of-apps bootstrap). This is the single source
+# of truth for what gets deployed — sports-store-deployments/k8s no longer
+# carries its own copy, so the two can't drift out of sync.
+resource "kubectl_manifest" "argocd_app" {
+  yaml_body = yamlencode({
+    apiVersion = "argoproj.io/v1alpha1"
+    kind       = "Application"
+    metadata = {
+      name        = "sports-store"
+      namespace   = "argocd"
+      annotations = local.argocd_app_annotations
+    }
+    spec = {
+      project = "default"
+      source = {
+        repoURL        = "https://github.com/${var.github_organization}/${var.deployments_repository}.git"
+        path           = "helm/sports-store"
+        targetRevision = "main"
+        helm = {
+          valueFiles = ["values.yaml", "values-aws.yaml"]
+        }
+      }
+      destination = {
+        server    = "https://kubernetes.default.svc"
+        namespace = "default"
+      }
+      syncPolicy = {
+        automated = {
+          prune    = true
+          selfHeal = true
+        }
+      }
+    }
+  })
+
+  # The Application CRD only exists once ArgoCD itself is installed.
+  depends_on = [helm_release.argocd]
+}
+
+resource "kubectl_manifest" "argocd_monitoring_app" {
+  yaml_body = yamlencode({
+    apiVersion = "argoproj.io/v1alpha1"
+    kind       = "Application"
+    metadata = {
+      name      = "sports-store-monitoring"
+      namespace = "argocd"
+      annotations = {
+        "argocd.argoproj.io/sync-wave" = "0"
+      }
+    }
+    spec = {
+      project = "default"
+      sources = [
+        {
+          repoURL        = "https://prometheus-community.github.io/helm-charts"
+          chart          = "kube-prometheus-stack"
+          targetRevision = "88.1.5"
+          helm = {
+            releaseName = "monitoring"
+            valueFiles  = ["$values/monitoring/values.yaml"]
+          }
+        },
+        {
+          repoURL        = "https://github.com/${var.github_organization}/${var.deployments_repository}.git"
+          targetRevision = "main"
+          ref            = "values"
+        },
+        {
+          repoURL        = "https://github.com/${var.github_organization}/${var.deployments_repository}.git"
+          targetRevision = "main"
+          path           = "monitoring/resources"
+        }
+      ]
+      destination = {
+        server    = "https://kubernetes.default.svc"
+        namespace = "monitoring"
+      }
+      syncPolicy = {
+        automated = {
+          prune    = true
+          selfHeal = true
+        }
+        syncOptions = [
+          "CreateNamespace=true",
+          "ServerSideApply=true"
+        ]
+      }
+    }
+  })
+  depends_on = [helm_release.argocd]
 }

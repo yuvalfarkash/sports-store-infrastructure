@@ -66,7 +66,7 @@ resource "kubectl_manifest" "argocd_app" {
       source = {
         repoURL        = "https://github.com/${var.github_organization}/${var.deployments_repository}.git"
         path           = "helm/sports-store"
-        targetRevision = "dev-branch"
+        targetRevision = "main"
         helm = {
           valueFiles = ["values.yaml", "values-aws.yaml"]
         }

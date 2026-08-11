@@ -35,7 +35,6 @@ validate_wait_configuration() {
 trigger_application_workflows() {
   local repositories=(
     "sports-store-frontend"
-    "sports-store-gateway"
     "sports-store-auth-service"
     "sports-store-catalog-service"
     "sports-store-cart-service"

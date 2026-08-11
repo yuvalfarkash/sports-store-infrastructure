@@ -1,0 +1,65 @@
+name: CI
+
+on:
+  workflow_dispatch: {}
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  validate:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v5
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.15.6
+      - uses: terraform-linters/setup-tflint@v6
+        with:
+          tflint_version: v0.61.0
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+      - name: Install YAML lint
+        run: python -m pip install yamllint==1.37.1
+      - name: Check Terraform formatting
+        run: terraform fmt -check -recursive terraform
+      - name: Initialize without backends
+        run: |
+          terraform -chdir=terraform init -backend=false -input=false
+          terraform -chdir=terraform/cloudfront init -backend=false -input=false
+      - name: Validate both Terraform roots
+        run: |
+          terraform -chdir=terraform validate
+          terraform -chdir=terraform/cloudfront validate
+      - name: Run mocked Terraform tests
+        run: |
+          terraform -chdir=terraform test
+          terraform -chdir=terraform/cloudfront test
+      - name: Run TFLint
+        run: |
+          tflint --init --config="${PWD}/.tflint.hcl"
+          tflint --chdir=terraform --config="${PWD}/.tflint.hcl"
+          tflint --chdir=terraform/cloudfront --config="${PWD}/.tflint.hcl"
+      - name: Run ShellCheck
+        run: shellcheck --severity=warning -x -P SCRIPTDIR deploy.sh destroy.sh scripts/*.sh tests/*.sh
+      - name: Lint YAML
+        run: yamllint -c .yamllint.yaml .github
+      - name: Validate infrastructure invariants
+        run: bash tests/test-static-config.sh
+      - name: Scan infrastructure source
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          scan-type: fs
+          scan-ref: .
+          scanners: secret
+          severity: HIGH,CRITICAL
+          exit-code: 1

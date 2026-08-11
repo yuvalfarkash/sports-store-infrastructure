@@ -1,7 +1,6 @@
 locals {
   microservices = [
     "sports-store-frontend",
-    "sports-store-gateway",
     "sports-store-auth-service",
     "sports-store-catalog-service",
     "sports-store-cart-service",

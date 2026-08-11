@@ -14,7 +14,6 @@ locals {
   # name -> ECR repository, matching the Helm chart's per-service value paths.
   argocd_managed_images = {
     frontend = "sports-store-frontend"
-    gateway  = "sports-store-gateway"
     auth     = "sports-store-auth-service"
     catalog  = "sports-store-catalog-service"
     cart     = "sports-store-cart-service"
@@ -34,8 +33,6 @@ locals {
 
       "argocd-image-updater.argoproj.io/frontend.helm.image-name" = "frontend.image.repository"
       "argocd-image-updater.argoproj.io/frontend.helm.image-tag"  = "frontend.image.tag"
-      "argocd-image-updater.argoproj.io/gateway.helm.image-name"  = "gateway.image.repository"
-      "argocd-image-updater.argoproj.io/gateway.helm.image-tag"   = "gateway.image.tag"
     },
     { for name in ["auth", "catalog", "cart", "order", "payment"] :
       "argocd-image-updater.argoproj.io/${name}.helm.image-name" => "services.${name}.image.repository"
@@ -43,7 +40,7 @@ locals {
     { for name in ["auth", "catalog", "cart", "order", "payment"] :
       "argocd-image-updater.argoproj.io/${name}.helm.image-tag" => "services.${name}.image.tag"
     },
-    { for name in ["frontend", "gateway", "auth", "catalog", "cart", "order", "payment"] :
+    { for name in ["frontend", "auth", "catalog", "cart", "order", "payment"] :
       "argocd-image-updater.argoproj.io/${name}.update-strategy" => "latest"
     },
   )

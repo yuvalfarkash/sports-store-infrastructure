@@ -27,7 +27,6 @@ variable "github_repositories" {
   type        = list(string)
   default = [
     "sports-store-frontend",
-    "sports-store-gateway",
     "sports-store-auth-service",
     "sports-store-catalog-service",
     "sports-store-cart-service",
@@ -37,12 +36,11 @@ variable "github_repositories" {
 
   validation {
     condition = (
-      length(var.github_repositories) == 7 &&
-      length(distinct(var.github_repositories)) == 7 &&
+      length(var.github_repositories) == 6 &&
+      length(distinct(var.github_repositories)) == 6 &&
       alltrue([
         for repository in var.github_repositories : contains([
           "sports-store-frontend",
-          "sports-store-gateway",
           "sports-store-auth-service",
           "sports-store-catalog-service",
           "sports-store-cart-service",
@@ -51,7 +49,7 @@ variable "github_repositories" {
         ], repository)
       ])
     )
-    error_message = "github_repositories must contain exactly the seven approved Sports Store application repositories."
+    error_message = "github_repositories must contain exactly the six approved Sports Store production image repositories."
   }
 }
 

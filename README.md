@@ -1,6 +1,6 @@
 # Sports Store AWS Infrastructure
 
-Terraform in `terraform/` defines the Milestone 4 AWS foundation for Sports Store. It creates networking, an EKS control plane and managed node group, managed EKS add-ons, workload-specific IAM roles, seven ECR repositories, the application secret container, and External Secrets Operator. The isolated `terraform/cloudfront/` root manages the public CloudFront distribution after Kubernetes has produced an ALB hostname. Application workloads remain GitOps-managed rather than being declared directly in Terraform.
+Terraform in `terraform/` defines the Milestone 4 AWS foundation for Sports Store. It creates networking, an EKS control plane and managed node group, managed EKS add-ons, workload-specific IAM roles, six ECR repositories, the application secret container, and External Secrets Operator. The isolated `terraform/cloudfront/` root manages the public CloudFront distribution after Kubernetes has produced an ALB hostname. Application workloads remain GitOps-managed rather than being declared directly in Terraform.
 
 ## Architecture
 
@@ -27,7 +27,7 @@ All Terraform-managed AWS resources receive the `Project=sports-store`, `Environ
 The external request path is:
 
 ```text
-User -> CloudFront -> ALB -> Ingress -> Gateway -> application services
+User -> CloudFront -> ALB -> Ingress -> frontend or application service
 ```
 
 Viewers are redirected from HTTP to HTTPS at CloudFront. CloudFront currently connects to the internet-facing ALB over HTTP. The ALB remains directly accessible by design for troubleshooting; there is no secret origin header, CloudFront-only security-group rule, custom domain, Route 53 record, or ACM certificate.
@@ -126,7 +126,7 @@ The outputs also expose the cluster endpoint, AWS region, VPC and subnet IDs, EC
 
 The default behavior allows `GET`, `HEAD`, `OPTIONS`, `PUT`, `POST`, `PATCH`, and `DELETE`. CloudFront's schema marks only `GET` and `HEAD` as cacheable methods, but the AWS-managed `CachingDisabled` policy uses zero TTLs so application responses are not retained. This avoids caching private or authenticated responses while the application is first placed behind the CDN.
 
-The AWS-managed `AllViewerExceptHostHeader` origin request policy forwards all viewer query strings, cookies, the `Authorization` header, CORS preflight headers, and other viewer headers. It deliberately omits the original viewer `Host` header so CloudFront supplies the ALB origin host instead. `OPTIONS` reaches the Gateway like every other allowed method. Compression is enabled, IPv6 is enabled, and direct ALB access is unchanged.
+The AWS-managed `AllViewerExceptHostHeader` origin request policy forwards all viewer query strings, cookies, the `Authorization` header, CORS preflight headers, and other viewer headers. It deliberately omits the original viewer `Host` header so CloudFront supplies the ALB origin host instead. `OPTIONS` reaches the selected backend like every other allowed method. Compression is enabled, IPv6 is enabled, and direct ALB access is unchanged.
 
 ## Application secret workflow
 

@@ -70,9 +70,12 @@ User -> CloudFront -> ALB -> Ingress -> frontend or application service
 
 Viewers are redirected from HTTP to HTTPS at CloudFront. CloudFront currently connects to the internet-facing ALB over HTTP. The ALB remains directly accessible by design for troubleshooting; there is no secret origin header, CloudFront-only security-group rule, custom domain, Route 53 record, or ACM certificate.
 
-CloudWatch currently collects EKS control-plane logs only. Application and
-NGINX workload log collection is intentionally deferred because Loki and Alloy
-were removed to fit the current cluster resource limits.
+CloudWatch collects EKS control-plane logs. Separately, four Terraform-managed
+Argo CD Applications reconcile monitoring (wave 0), Loki 18.5.0 (wave 1),
+Alloy 1.11.0 (wave 2), and the Sports Store workload (wave 3). Loki and Alloy
+read their values from `sports-store-deployments/main`; no Application targets
+the development branch. Workload logs stay internal to the cluster and use
+small, ephemeral storage as documented in that repository.
 
 ## Required tools
 
@@ -233,8 +236,8 @@ Confirm persistent-data and backup requirements, ensure both Terraform states ar
 To add another EKS administrator later, supply an explicit same-account IAM user
 or role ARN through `additional_eks_principal_arns` in an approved, uncommitted
 Terraform variable file. Validation rejects account root, wildcards, and other
-accounts. S3 frontend hosting, Loki/Alloy, and EKS node-sizing changes remain
-separate future tasks.
+accounts. S3 frontend hosting and EKS node-sizing changes remain separate
+future tasks.
 
 CloudFront is never created or deleted with AWS CLI. The separate CloudFront state is intentionally destroyed before Kubernetes or ALB changes, works when the distribution or ALB is already absent, and keeps normal create/destroy operations idempotent. Do not discard either Terraform state before completing this sequence.
 

@@ -9,8 +9,8 @@ module "eks" {
   endpoint_private_access = true
   enable_irsa             = true
 
-  # CloudWatch collects EKS control-plane logs only. Workload log collection
-  # is deferred because Loki and Alloy are disabled for the current cluster size.
+  # CloudWatch collects control-plane logs. The separate GitOps-managed
+  # Loki/Alloy stack collects namespace-scoped workload logs and events.
   enabled_log_types                      = ["api", "audit", "authenticator"]
   create_cloudwatch_log_group            = true
   cloudwatch_log_group_retention_in_days = 7

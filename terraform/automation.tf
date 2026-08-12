@@ -56,9 +56,11 @@ resource "kubectl_manifest" "argocd_app" {
     apiVersion = "argoproj.io/v1alpha1"
     kind       = "Application"
     metadata = {
-      name        = "sports-store"
-      namespace   = "argocd"
-      annotations = local.argocd_app_annotations
+      name      = "sports-store"
+      namespace = "argocd"
+      annotations = merge(local.argocd_app_annotations, {
+        "argocd.argoproj.io/sync-wave" = "3"
+      })
     }
     spec = {
       project = "default"
@@ -148,4 +150,100 @@ resource "kubectl_manifest" "argocd_monitoring_app" {
     }
   })
   depends_on = [helm_release.argocd]
+}
+
+resource "kubectl_manifest" "argocd_loki_app" {
+  yaml_body = yamlencode({
+    apiVersion = "argoproj.io/v1alpha1"
+    kind       = "Application"
+    metadata = {
+      name      = "sports-store-loki"
+      namespace = "argocd"
+      annotations = {
+        "argocd.argoproj.io/sync-wave" = "1"
+      }
+    }
+    spec = {
+      project = "default"
+      sources = [
+        {
+          repoURL        = "https://grafana-community.github.io/helm-charts"
+          chart          = "loki"
+          targetRevision = "18.5.0"
+          helm = {
+            releaseName = "loki"
+            valueFiles  = ["$values/logging/loki-values.yaml"]
+          }
+        },
+        {
+          repoURL        = "https://github.com/${var.github_organization}/${var.deployments_repository}.git"
+          targetRevision = "main"
+          ref            = "values"
+        }
+      ]
+      destination = {
+        server    = "https://kubernetes.default.svc"
+        namespace = "monitoring"
+      }
+      syncPolicy = {
+        automated = {
+          prune    = true
+          selfHeal = true
+        }
+      }
+    }
+  })
+
+  depends_on = [
+    helm_release.argocd,
+    kubectl_manifest.argocd_monitoring_app,
+  ]
+}
+
+resource "kubectl_manifest" "argocd_alloy_app" {
+  yaml_body = yamlencode({
+    apiVersion = "argoproj.io/v1alpha1"
+    kind       = "Application"
+    metadata = {
+      name      = "sports-store-alloy"
+      namespace = "argocd"
+      annotations = {
+        "argocd.argoproj.io/sync-wave" = "2"
+      }
+    }
+    spec = {
+      project = "default"
+      sources = [
+        {
+          repoURL        = "https://grafana.github.io/helm-charts"
+          chart          = "alloy"
+          targetRevision = "1.11.0"
+          helm = {
+            releaseName = "alloy"
+            valueFiles  = ["$values/logging/alloy-values.yaml"]
+          }
+        },
+        {
+          repoURL        = "https://github.com/${var.github_organization}/${var.deployments_repository}.git"
+          targetRevision = "main"
+          ref            = "values"
+        }
+      ]
+      destination = {
+        server    = "https://kubernetes.default.svc"
+        namespace = "monitoring"
+      }
+      syncPolicy = {
+        automated = {
+          prune    = true
+          selfHeal = true
+        }
+      }
+    }
+  })
+
+  depends_on = [
+    helm_release.argocd,
+    kubectl_manifest.argocd_loki_app,
+  ]
 }

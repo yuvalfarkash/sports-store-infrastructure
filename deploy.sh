@@ -7,11 +7,22 @@ CLOUDFRONT_DIR="$TERRAFORM_DIR/cloudfront"
 
 # shellcheck source=scripts/cloudfront-common.sh
 source "$INFRA_ROOT/scripts/cloudfront-common.sh"
+# shellcheck source=scripts/aws-account-safety.sh
+source "$INFRA_ROOT/scripts/aws-account-safety.sh"
 
 readonly APP_NAMESPACE="sports-store"
 readonly ARGOCD_NAMESPACE="argocd"
 readonly ARGOCD_APPLICATION="sports-store"
 readonly INGRESS_NAME="sports-store"
+readonly GITHUB_ORGANIZATION="sports-store-devops-team"
+readonly -a APPLICATION_REPOSITORIES=(
+  "sports-store-frontend"
+  "sports-store-auth-service"
+  "sports-store-catalog-service"
+  "sports-store-cart-service"
+  "sports-store-order-service"
+  "sports-store-payment-service"
+)
 
 ARGO_APPLICATION_TIMEOUT_SECONDS="${ARGO_APPLICATION_TIMEOUT_SECONDS:-300}"
 ALB_HOSTNAME_TIMEOUT_SECONDS="${ALB_HOSTNAME_TIMEOUT_SECONDS:-1200}"
@@ -32,25 +43,40 @@ validate_wait_configuration() {
   done
 }
 
-trigger_application_workflows() {
-  local repositories=(
-    "sports-store-frontend"
-    "sports-store-auth-service"
-    "sports-store-catalog-service"
-    "sports-store-cart-service"
-    "sports-store-order-service"
-    "sports-store-payment-service"
-  )
-  local organization="sports-store-devops-team"
+configure_github_actions_variables() {
+  local aws_region="$1"
+  local publishing_role_arn="$2"
   local repository
 
-  echo "=== Triggering CI workflows for all microservices ==="
-  for repository in "${repositories[@]}"; do
-    echo "Triggering CI for $repository"
-    gh workflow run ci.yaml -R "$organization/$repository" --ref main ||
-      echo "Failed to trigger CI for $repository"
+  gh auth status >/dev/null
+  for repository in "${APPLICATION_REPOSITORIES[@]}"; do
+    gh variable set AWS_REGION --body "$aws_region" \
+      -R "$GITHUB_ORGANIZATION/$repository"
+    gh variable set AWS_ECR_PUBLISH_ROLE_ARN --body "$publishing_role_arn" \
+      -R "$GITHUB_ORGANIZATION/$repository"
+    [[ "$(gh variable get AWS_REGION -R "$GITHUB_ORGANIZATION/$repository" \
+      --json value --jq .value)" == "$aws_region" ]] || return 1
+    [[ "$(gh variable get AWS_ECR_PUBLISH_ROLE_ARN -R "$GITHUB_ORGANIZATION/$repository" \
+      --json value --jq .value)" == "$publishing_role_arn" ]] || return 1
   done
-  echo "All triggers dispatched."
+}
+
+trigger_application_workflows() {
+  local repository run_id
+
+  echo "=== Triggering and waiting for main-branch application workflows ==="
+  for repository in "${APPLICATION_REPOSITORIES[@]}"; do
+    echo "Rerunning the latest main push CI for $repository"
+    run_id="$(gh run list -R "$GITHUB_ORGANIZATION/$repository" --workflow ci.yaml \
+      --branch main --event push --limit 1 --json databaseId --jq '.[0].databaseId')"
+    [[ -n "$run_id" ]] || {
+      printf 'ERROR: no main push workflow exists for %s; refusing to bypass its publish gate.\n' \
+        "$repository" >&2
+      return 1
+    }
+    gh run rerun "$run_id" -R "$GITHUB_ORGANIZATION/$repository"
+    gh run watch "$run_id" -R "$GITHUB_ORGANIZATION/$repository" --exit-status
+  done
 }
 
 apply_cloudfront() {
@@ -72,29 +98,34 @@ main() {
   local alb_hostname
   local cloudfront_domain
   local cloudfront_url
+  local publishing_role_arn
 
+  verify_expected_aws_identity
   validate_wait_configuration
 
-  echo "=== Stage 1: provisioning base infrastructure and GitOps components ==="
   terraform -chdir="$TERRAFORM_DIR" init -input=false
+  terraform -chdir="$CLOUDFRONT_DIR" init -input=false
+  verify_terraform_state_account "$TERRAFORM_DIR"
+  verify_terraform_state_account "$CLOUDFRONT_DIR"
+
+  echo "=== Stage 1: provisioning base infrastructure and GitOps components ==="
   terraform -chdir="$TERRAFORM_DIR" apply -auto-approve -input=false
-
-  printf '%s\n' \
-    '=== Application secret bootstrap is manual ===' \
-    'Terraform created the AWS Secrets Manager container but did not create a secret version.' \
-    'From the repository root, verify identity and status, then populate the first version:' \
-    '  bash scripts/bootstrap-application-secrets.sh --check' \
-    '  bash scripts/bootstrap-application-secrets.sh' \
-    'Do not use --rotate during a normal deployment.'
-
-  trigger_application_workflows
 
   cluster_name="$(terraform -chdir="$TERRAFORM_DIR" output -raw eks_cluster_name)"
   aws_region="$(terraform -chdir="$TERRAFORM_DIR" output -raw aws_region)"
-  if [[ -z "$cluster_name" || -z "$aws_region" ]]; then
-    echo "ERROR: Terraform did not return the EKS cluster name and AWS region." >&2
+  publishing_role_arn="$(terraform -chdir="$TERRAFORM_DIR" output -raw github_actions_ecr_publishing_role_arn)"
+  if [[ -z "$cluster_name" || "$aws_region" != "$EXPECTED_AWS_REGION" ||
+    "$publishing_role_arn" != "arn:aws:iam::${EXPECTED_AWS_ACCOUNT_ID}:role/"* ]]; then
+    echo "ERROR: Terraform returned unexpected deployment metadata." >&2
     return 1
   fi
+
+  echo "=== Configuring approved repositories for OIDC-based ECR publication ==="
+  configure_github_actions_variables "$aws_region" "$publishing_role_arn"
+  trigger_application_workflows
+
+  echo "=== Bootstrapping the first application secret version ==="
+  bash "$INFRA_ROOT/scripts/bootstrap-application-secrets.sh" --ensure
 
   echo "=== Configuring kubectl for cluster $cluster_name in $aws_region ==="
   aws eks update-kubeconfig --name "$cluster_name" --region "$aws_region"

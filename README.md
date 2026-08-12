@@ -1,5 +1,20 @@
 # Sports Store AWS Infrastructure
 
+## AWS account boundary
+
+This configuration targets AWS account `123456789012` in `eu-central-1`. The
+default approved deployment and EKS administration principal is
+`arn:aws:iam::123456789012:user/deploy-user`. Both Terraform roots and every
+mutating operational script reject any other active AWS account before changes
+begin. Verify identity with `aws sts get-caller-identity --output json`.
+
+Do not commit long-lived access keys. GitHub Actions assumes the
+Terraform-created ECR publishing role through OIDC and temporary credentials.
+The six application repositories require the non-secret Actions variables
+`AWS_REGION=eu-central-1` and `AWS_ECR_PUBLISH_ROLE_ARN=<Terraform role ARN>`.
+`deploy.sh` sets and reads back both variables on only those repositories before
+dispatching workflows; it never configures the local-only Gateway.
+
 Terraform in `terraform/` defines the Milestone 4 AWS foundation for Sports Store. It creates networking, an EKS control plane and managed node group, managed EKS add-ons, workload-specific IAM roles, six ECR repositories, the application secret container, and External Secrets Operator. The isolated `terraform/cloudfront/` root manages the public CloudFront distribution after Kubernetes has produced an ALB hostname. Application workloads remain GitOps-managed rather than being declared directly in Terraform.
 
 ## Architecture
@@ -18,7 +33,7 @@ Terraform in `terraform/` defines the Milestone 4 AWS foundation for Sports Stor
 - EKS-managed CoreDNS, kube-proxy, VPC CNI, and EBS CSI add-ons
 - Dedicated IRSA roles for EBS CSI, AWS Load Balancer Controller, and External Secrets Operator
 - An AWS Secrets Manager container named `sports-store/production/app`; Terraform creates no secret version
-- Seven immutable, scan-on-push ECR repositories
+- Six immutable, scan-on-push ECR repositories
 - A GitHub Actions OIDC role limited to ECR publishing from approved `main` branches
 - A low-cost `PriceClass_100` CloudFront distribution using its default domain and certificate
 
@@ -59,7 +74,16 @@ Create a VCS-driven HCP Terraform workspace for the base root with:
 
 Configure the required HCP Terraform project, workspace, variable set, AWS trust, and run permissions outside Git. Remove any legacy `mongodb_root_password` and `jwt_secret` workspace variables: this configuration no longer accepts them. Do not store long-lived AWS access keys in this repository or commit Terraform state.
 
-The CloudFront root has independent lifecycle and state so a repeated stage-1 apply cannot plan deletion of an existing distribution merely because an ALB hostname is not yet available as an input. Configure a second state/backend for working directory `terraform/cloudfront`; do not point both roots at the same state. Preserve and lock both states. The deployment and destroy scripts expect each root's backend to have been initialized on Yuval's workstation.
+The CloudFront root has independent lifecycle and state so a repeated stage-1 apply cannot plan deletion of an existing distribution merely because an ALB hostname is not yet available as an input. Configure a second state/backend for working directory `terraform/cloudfront`; do not point both roots at the same state. Preserve and lock both states.
+
+the operator's account must use two new, empty, separately locked states: one for
+`terraform/` and one for `terraform/cloudfront/`. Never copy, select, migrate,
+import, overwrite, or reuse state from another AWS account. Preserve Yuval's
+old states in their original backends/workspaces with lineage unchanged; use
+them only with Yuval's account for explicitly approved cleanup. Before the operator's
+first deployment, initialize each root against its new backend and confirm
+`terraform state list` is empty. The scripts reject non-empty legacy state
+without the expected-account output.
 
 ## Initialize and validate
 
@@ -90,7 +114,7 @@ Do not use a local plan as a substitute for the reviewed VCS-driven HCP Terrafor
 
 The ALB is created asynchronously by AWS Load Balancer Controller only after Argo CD creates the Helm Ingress. Terraform therefore cannot know the ALB hostname during the initial base plan. The two independent roots avoid a circular dependency and require no provisioner, generated variable file, direct AWS CLI CloudFront mutation, or Terraform state manipulation.
 
-On an AWS-authenticated workstation with both Terraform backends initialized, Yuval reviews the expected plans and runs from the repository root:
+On a workstation authenticated to account `123456789012`, the operator reviews the expected plans and runs from the repository root:
 
 ```bash
 bash deploy.sh
@@ -98,10 +122,12 @@ bash deploy.sh
 
 The script performs this sequence:
 
-1. Applies the base `terraform/` root and waits for Terraform to finish.
-2. Triggers each application workflow from `main` and configures `kubectl` from the `eks_cluster_name` and `aws_region` Terraform outputs.
-3. Waits up to five minutes for the `sports-store` Argo CD Application, then up to 20 minutes for `sports-store/sports-store` Ingress to receive a hostname. It polls every 10 seconds, validates the value as an AWS ELB hostname, and fails without invoking stage 2 on timeout or invalid data. The three waits are configurable with positive-integer `ARGO_APPLICATION_TIMEOUT_SECONDS`, `ALB_HOSTNAME_TIMEOUT_SECONDS`, and `KUBERNETES_POLL_SECONDS` environment variables.
-4. Applies `terraform/cloudfront/` with the validated hostname and region, waits for CloudFront deployment, then prints the CloudFront HTTPS URL and direct ALB HTTP URL.
+1. Verifies account `123456789012` and validates both state roots.
+2. Applies the base root in the operator's account.
+3. Reads the OIDC publishing-role ARN, configures and verifies both Actions variables on the six approved repositories, then reruns and waits for each repository's latest `main` push workflow. This preserves the workflows' push-only publication gate; a dispatch event would validate without publishing.
+4. Bootstraps the first Secrets Manager version without printing its values.
+5. Configures `kubectl`, waits for Argo CD and the ALB with bounded polling, and validates the hostname.
+6. Applies the separate CloudFront root and prints both final URLs.
 
 On a clean deployment the CloudFront root contains no distribution until stage 2 receives a valid hostname. On a repeated deployment, the base root cannot alter the distribution because it has separate state; stage 2 idempotently reconciles the existing distribution with the current Ingress hostname. This also accommodates an ALB replacement.
 
@@ -132,7 +158,7 @@ The AWS-managed `AllViewerExceptHostHeader` origin request policy forwards all v
 
 AWS Secrets Manager is the source of truth. Terraform creates only the deterministic `sports-store/production/app` container and metadata; it deliberately has no `aws_secretsmanager_secret_version` resource. External Secrets Operator runs in the dedicated `external-secrets` namespace. Its Helm-created `external-secrets` ServiceAccount is annotated with a least-privilege IRSA role whose trust is restricted to that exact namespace and ServiceAccount and whose policy can only describe/read this secret ARN.
 
-After the first successful Terraform apply, Yuval must populate the first version manually from a machine authenticated to the intended AWS account:
+After the first successful Terraform apply, the operator can inspect or populate the first version from a machine authenticated to the intended AWS account:
 
 ```bash
 bash scripts/bootstrap-application-secrets.sh --check
@@ -174,10 +200,17 @@ An expected first plan creates the Secrets Manager metadata container, the scope
 
 Confirm persistent-data and backup requirements, ensure both Terraform states are available, and run `bash destroy.sh` from the authenticated workstation. Do not remove the Ingress first. The script uses this order:
 
-1. Initializes the isolated CloudFront root and, if its state contains resources, runs `terraform destroy`. The AWS provider disables and deletes only the state-managed distribution and waits for CloudFront; if stage 2 never ran, this is a no-op.
-2. Selects the exact EKS cluster from base Terraform outputs, deletes the Argo CD Application so self-heal cannot recreate the Ingress, captures and validates the Ingress hostname, and deletes the namespace's Ingress.
-3. Polls for the exact captured ALB DNS name for at most 30 attempts at 10-second intervals. It stops with an error instead of destroying the VPC if the ALB remains.
-4. Performs the existing scoped controller-security-group cleanup, runs the base `terraform destroy`, and reports retained available EBS volumes.
+1. Verifies account `123456789012` and rejects unexpected base or CloudFront state before deletion.
+2. Initializes the isolated CloudFront root and, if its state contains resources, runs `terraform destroy`. The AWS provider disables and deletes only the state-managed distribution and waits for CloudFront; if stage 2 never ran, this is a no-op.
+3. Selects the exact EKS cluster from base Terraform outputs, deletes the Argo CD Application so self-heal cannot recreate the Ingress, captures and validates the Ingress hostname, and deletes the namespace's Ingress.
+4. Polls for the exact captured ALB DNS name for at most 30 attempts at 10-second intervals. It stops with an error instead of destroying the VPC if the ALB remains.
+5. Performs the scoped controller-security-group cleanup, destroys the operator's base state, and reports retained available EBS volumes.
+
+To add another EKS administrator later, supply an explicit same-account IAM user
+or role ARN through `additional_eks_principal_arns` in an approved, uncommitted
+Terraform variable file. Validation rejects account root, wildcards, and other
+accounts. S3 frontend hosting, Loki/Alloy, and EKS node-sizing changes remain
+separate future tasks.
 
 CloudFront is never created or deleted with AWS CLI. The separate CloudFront state is intentionally destroyed before Kubernetes or ALB changes, works when the distribution or ALB is already absent, and keeps normal create/destroy operations idempotent. Do not discard either Terraform state before completing this sequence.
 

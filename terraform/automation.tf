@@ -11,6 +11,8 @@ resource "kubernetes_namespace_v1" "sports_store" {
 }
 
 locals {
+  application_image_registry = "${local.account_id}.dkr.ecr.${var.aws_region}.amazonaws.com"
+
   # name -> ECR repository, matching the Helm chart's per-service value paths.
   argocd_managed_images = {
     frontend = "sports-store-frontend"
@@ -23,7 +25,7 @@ locals {
 
   argocd_image_list = join(",", [
     for name, repo in local.argocd_managed_images :
-    "${name}=${local.account_id}.dkr.ecr.${var.aws_region}.amazonaws.com/${repo}"
+    "${name}=${local.application_image_registry}/${repo}"
   ])
 
   argocd_app_annotations = merge(
@@ -66,6 +68,12 @@ resource "kubectl_manifest" "argocd_app" {
         targetRevision = "main"
         helm = {
           valueFiles = ["values.yaml", "values-aws.yaml"]
+          parameters = [
+            {
+              name  = "global.applicationImageRegistry"
+              value = local.application_image_registry
+            }
+          ]
         }
       }
       destination = {

@@ -7,6 +7,8 @@ CLOUDFRONT_DIR="$TERRAFORM_DIR/cloudfront"
 
 # shellcheck source=scripts/cloudfront-common.sh
 source "$INFRA_ROOT/scripts/cloudfront-common.sh"
+# shellcheck source=scripts/aws-account-safety.sh
+source "$INFRA_ROOT/scripts/aws-account-safety.sh"
 
 ALB_DELETE_MAX_ATTEMPTS="${ALB_DELETE_MAX_ATTEMPTS:-30}"
 ALB_DELETE_POLL_SECONDS="${ALB_DELETE_POLL_SECONDS:-10}"
@@ -28,6 +30,13 @@ terraform_state_list() {
   return 1
 }
 
+verify_expected_aws_identity
+
+terraform -chdir="$CLOUDFRONT_DIR" init -input=false
+terraform -chdir="$TERRAFORM_DIR" init -input=false
+verify_terraform_state_account "$CLOUDFRONT_DIR"
+verify_terraform_state_account "$TERRAFORM_DIR"
+
 if ! is_positive_integer "$ALB_DELETE_MAX_ATTEMPTS" ||
   ! is_positive_integer "$ALB_DELETE_POLL_SECONDS"; then
   echo "ERROR: ALB delete wait settings must be positive integers." >&2
@@ -35,7 +44,6 @@ if ! is_positive_integer "$ALB_DELETE_MAX_ATTEMPTS" ||
 fi
 
 echo "=== Destroying Terraform-managed CloudFront before the Ingress and ALB ==="
-terraform -chdir="$CLOUDFRONT_DIR" init -input=false
 CLOUDFRONT_STATE_RESOURCES="$(terraform_state_list "$CLOUDFRONT_DIR")"
 if [[ -n "$CLOUDFRONT_STATE_RESOURCES" ]]; then
   terraform -chdir="$CLOUDFRONT_DIR" destroy

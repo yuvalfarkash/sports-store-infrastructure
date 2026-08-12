@@ -54,7 +54,10 @@ jobs:
       - name: Lint YAML
         run: yamllint -c .yamllint.yaml .github
       - name: Validate infrastructure invariants
-        run: bash tests/test-static-config.sh
+        run: |
+          bash tests/test-static-config.sh
+          bash tests/test-account-safety.sh
+          bash tests/test-deploy-configuration.sh
       - name: Scan infrastructure source
         uses: aquasecurity/trivy-action@v0.36.0
         with:

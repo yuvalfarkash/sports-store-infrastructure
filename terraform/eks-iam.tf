@@ -56,18 +56,30 @@ resource "aws_iam_role_policy_attachment" "argocd_image_updater_ecr_read" {
   depends_on = [module.argocd_image_updater_irsa]
 }
 
-# Grants teammates direct `kubectl` access instead of funneling all cluster
-# debugging through whichever identity happened to run `terraform apply`
-# (the only one enable_cluster_creator_admin_permissions covers, in eks.tf).
-resource "aws_eks_access_entry" "teammates" {
-  for_each = toset(var.teammate_iam_arns)
+# Grants explicitly approved same-account principals direct kubectl access.
+locals {
+  approved_eks_principal_arns = concat(
+    [local.deployment_principal],
+    var.additional_eks_principal_arns,
+  )
+}
+
+resource "aws_eks_access_entry" "approved_principals" {
+  for_each = toset(local.approved_eks_principal_arns)
 
   cluster_name  = module.eks.cluster_name
   principal_arn = each.value
+
+  lifecycle {
+    precondition {
+      condition     = split(":", each.value)[4] == local.expected_account_id
+      error_message = "EKS principal ${each.value} is outside expected AWS account ${local.expected_account_id}."
+    }
+  }
 }
 
-resource "aws_eks_access_policy_association" "teammates_admin" {
-  for_each = aws_eks_access_entry.teammates
+resource "aws_eks_access_policy_association" "approved_principals_admin" {
+  for_each = aws_eks_access_entry.approved_principals
 
   cluster_name  = module.eks.cluster_name
   principal_arn = each.value.principal_arn

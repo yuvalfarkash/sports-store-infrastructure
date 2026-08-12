@@ -13,6 +13,16 @@ output "aws_region" {
   value       = var.aws_region
 }
 
+output "expected_aws_account_id" {
+  description = "AWS account that Terraform is permitted to manage"
+  value       = local.expected_account_id
+}
+
+output "application_image_registry" {
+  description = "Account-derived ECR registry supplied to Argo CD Helm parameters"
+  value       = local.application_image_registry
+}
+
 output "vpc_id" {
   description = "ID of the Sports Store VPC"
   value       = module.vpc.vpc_id

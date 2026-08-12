@@ -8,6 +8,23 @@ fail() {
 
 grep -q 'targetRevision = "main"' terraform/automation.tf || fail "Argo CD no longer targets main"
 grep -q 'name = "sports-store"' terraform/automation.tf || fail "namespace changed"
+grep -q 'targetRevision = "main"' terraform/automation.tf || fail "Argo CD no longer targets main"
+grep -q 'global.applicationImageRegistry' terraform/automation.tf || fail "Argo CD no longer injects the account-derived registry"
+grep -q 'deployment_principal_arn' config/aws-environment.json || fail "authoritative deployment principal is missing"
+grep -q '\[local.deployment_principal\]' terraform/eks-iam.tf || fail "deployment principal is not granted EKS access"
+grep -q 'repo:${var.github_organization}/${repository}:ref:refs/heads/main' terraform/iam-oidc.tf || fail "OIDC main-branch subject is missing"
+if grep -q 'StringLike' terraform/iam-oidc.tf || grep -q '@\*' terraform/iam-oidc.tf; then
+  fail "OIDC trust contains wildcard subject matching"
+fi
+grep -q -- '--event push' deploy.sh || fail "deploy does not preserve the main-push publication gate"
+if grep -q 'gh workflow run' deploy.sh; then
+  fail "deploy uses workflow_dispatch, which cannot publish application images"
+fi
+
+old_account_id="324621""154117"
+if git grep -n "$old_account_id" -- ':!tests/test-account-safety.sh' ':!terraform/tests/*.tftest.hcl' ':!terraform/cloudfront/tests/*.tftest.hcl'; then
+  fail "Yuval account remains in active tracked configuration"
+fi
 
 if grep -Rqi 'sports-store-gateway' terraform/ecr.tf terraform/iam-oidc.tf \
   terraform/automation.tf terraform/variables.tf terraform/terraform.tfvars.example deploy.sh; then

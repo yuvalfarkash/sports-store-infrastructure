@@ -1,4 +1,27 @@
-mock_provider "aws" {}
+mock_provider "aws" {
+  mock_data "aws_caller_identity" {
+    defaults = {
+      account_id = "123456789012"
+      arn        = "arn:aws:iam::123456789012:user/deploy-user"
+      user_id    = "AIDATESTUSER"
+    }
+  }
+}
+
+run "wrong_account_rejected" {
+  command = plan
+
+  override_data {
+    target = data.aws_caller_identity.current
+    values = {
+      account_id = "324621154117"
+      arn        = "arn:aws:iam::324621154117:user/wrong-account"
+      user_id    = "AIDAWRONGACCOUNT"
+    }
+  }
+
+  expect_failures = [terraform_data.expected_aws_account]
+}
 
 run "disabled_without_an_origin" {
   command = plan

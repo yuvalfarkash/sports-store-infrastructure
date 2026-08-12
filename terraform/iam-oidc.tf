@@ -2,6 +2,13 @@ data "aws_iam_openid_connect_provider" "github" {
   url = "https://token.actions.githubusercontent.com"
 }
 
+locals {
+  github_oidc_subjects = [
+    for repository in var.github_repositories :
+    "repo:${var.github_organization}/${repository}:ref:refs/heads/main"
+  ]
+}
+
 data "aws_iam_policy_document" "github_ecr_publisher_assume_role" {
   statement {
     actions = ["sts:AssumeRoleWithWebIdentity"]
@@ -18,14 +25,9 @@ data "aws_iam_policy_document" "github_ecr_publisher_assume_role" {
     }
 
     condition {
-      test     = "StringLike"
+      test     = "StringEquals"
       variable = "token.actions.githubusercontent.com:sub"
-      values = flatten([
-        for repository in var.github_repositories : [
-          "repo:${var.github_organization}/${repository}:ref:refs/heads/main",
-          "repo:${var.github_organization}@*/${repository}@*:ref:refs/heads/main",
-        ]
-      ])
+      values   = local.github_oidc_subjects
     }
   }
 }

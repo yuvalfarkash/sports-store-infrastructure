@@ -4,9 +4,10 @@ umask 077
 
 usage() {
   printf '%s\n' \
-    'Usage: bootstrap-application-secrets.sh [--check | --rotate]' \
+    'Usage: bootstrap-application-secrets.sh [--check | --ensure | --rotate]' \
     '' \
     '  --check   Verify identity, secret metadata, and whether AWSCURRENT exists.' \
+    '  --ensure  Create the first version if absent; succeed without changing an existing version.' \
     '  --rotate  Explicitly replace an existing AWSCURRENT secret version.' \
     '' \
     'Optional environment variables:' \
@@ -16,22 +17,30 @@ usage() {
 
 mode='write'
 rotate='false'
+ensure='false'
 
 while (($# > 0)); do
   case "$1" in
     --check)
-      if [[ "$rotate" == 'true' ]]; then
-        printf 'Error: --check and --rotate cannot be combined.\n' >&2
+      if [[ "$rotate" == 'true' || "$ensure" == 'true' ]]; then
+        printf 'Error: --check cannot be combined with --ensure or --rotate.\n' >&2
         exit 2
       fi
       mode='check'
       ;;
     --rotate)
-      if [[ "$mode" == 'check' ]]; then
-        printf 'Error: --check and --rotate cannot be combined.\n' >&2
+      if [[ "$mode" == 'check' || "$ensure" == 'true' ]]; then
+        printf 'Error: --rotate cannot be combined with --check or --ensure.\n' >&2
         exit 2
       fi
       rotate='true'
+      ;;
+    --ensure)
+      if [[ "$mode" == 'check' || "$rotate" == 'true' ]]; then
+        printf 'Error: --ensure cannot be combined with --check or --rotate.\n' >&2
+        exit 2
+      fi
+      ensure='true'
       ;;
     -h|--help)
       usage
@@ -64,6 +73,10 @@ fi
 
 script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 terraform_dir="$(cd -- "$script_dir/../terraform" && pwd)"
+# shellcheck source=aws-account-safety.sh
+source "$script_dir/aws-account-safety.sh"
+
+verify_expected_aws_identity
 
 aws_region="${AWS_REGION:-${AWS_DEFAULT_REGION:-}}"
 secret_id="${SPORTS_STORE_SECRET_ID:-}"
@@ -94,14 +107,11 @@ if [[ -z "$aws_region" || -z "$secret_id" ]]; then
   exit 1
 fi
 
-identity="$(aws sts get-caller-identity \
-  --region "$aws_region" \
-  --query '[Account,Arn]' \
-  --output text)" || {
-  printf 'Error: unable to verify the active AWS identity.\n' >&2
+if [[ "$aws_region" != "$EXPECTED_AWS_REGION" ]]; then
+  printf 'Error: AWS region mismatch. Expected %s, actual %s.\n' \
+    "$EXPECTED_AWS_REGION" "$aws_region" >&2
   exit 1
-}
-read -r account_id caller_arn <<<"$identity"
+fi
 
 secret_name="$(aws secretsmanager describe-secret \
   --secret-id "$secret_id" \
@@ -127,8 +137,6 @@ if [[ -z "$current_version" || "$current_version" == 'None' || "$current_version
   has_current='false'
 fi
 
-printf 'AWS account: %s\n' "$account_id"
-printf 'Caller ARN: %s\n' "$caller_arn"
 printf 'AWS region: %s\n' "$aws_region"
 printf 'Secret name: %s\n' "$secret_name"
 
@@ -138,6 +146,11 @@ if [[ "$mode" == 'check' ]]; then
   else
     printf 'Current version: absent\n'
   fi
+  exit 0
+fi
+
+if [[ "$has_current" == 'true' && "$ensure" == 'true' ]]; then
+  printf 'Current secret version already exists; no change required.\n'
   exit 0
 fi
 

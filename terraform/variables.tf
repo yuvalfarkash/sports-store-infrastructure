@@ -59,11 +59,16 @@ variable "deployments_repository" {
   default     = "sports-store-deployments"
 }
 
-variable "teammate_iam_arns" {
-  description = "IAM user/role ARNs granted direct kubectl access (via EKS access entries) alongside the Terraform apply identity"
+variable "additional_eks_principal_arns" {
+  description = "Additional explicit same-account IAM user/role ARNs granted EKS cluster-admin access"
   type        = list(string)
-  default = [
-    "arn:aws:iam::324621154117:user/the operator-sport",
-    "arn:aws:iam::324621154117:user/Daniel-sport",
-  ]
+  default     = []
+
+  validation {
+    condition = alltrue([
+      for arn in var.additional_eks_principal_arns :
+      can(regex("^arn:aws:iam::[0-9]{12}:(user|role)/[A-Za-z0-9+=,.@_/-]+$", arn))
+    ])
+    error_message = "Every additional EKS principal must be an explicit IAM user or role ARN; root and wildcard principals are forbidden."
+  }
 }

@@ -7,3 +7,8 @@ output "cloudfront_https_url" {
   description = "Complete HTTPS URL for the Sports Store CloudFront distribution, or null when disabled"
   value       = local.cloudfront_enabled ? "https://${aws_cloudfront_distribution.sports_store[0].domain_name}" : null
 }
+
+output "expected_aws_account_id" {
+  description = "AWS account that this CloudFront root is permitted to manage"
+  value       = local.expected_account_id
+}

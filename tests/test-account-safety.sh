@@ -12,32 +12,85 @@ fail() {
 
 AWS_ACCOUNT='123456789012'
 AWS_ARN='arn:aws:iam::123456789012:user/deploy-user'
-AWS_FAILURE='false'
+AWS_RESPONSE_MODE='valid'
+AWS_CALL_LOG="$(mktemp)"
+trap 'rm -f "$AWS_CALL_LOG"' EXIT
 aws() {
-  [[ "$AWS_FAILURE" == 'false' ]] || return 1
-  case "$*" in
-    *'--query Account'*) printf '%s\n' "$AWS_ACCOUNT" ;;
-    *'--query Arn'*) printf '%s\n' "$AWS_ARN" ;;
+  printf 'call\n' >>"$AWS_CALL_LOG"
+  [[ "$*" == 'sts get-caller-identity --output json' ]] || return 1
+  case "$AWS_RESPONSE_MODE" in
+    valid) printf '{"Account":"%s","Arn":"%s","UserId":"test"}\n' "$AWS_ACCOUNT" "$AWS_ARN" ;;
+    missing) printf '{}\n' ;;
+    failure) return 1 ;;
     *) return 1 ;;
   esac
 }
-verify_expected_aws_identity >/dev/null || fail "expected account was rejected"
 
-AWS_ACCOUNT='324621154117'
-AWS_ARN='arn:aws:iam::324621154117:user/wrong'
-if verify_expected_aws_identity >/dev/null 2>&1; then
-  fail "wrong account was accepted"
-fi
+jq() {
+  local expression="${*: -1}"
+  case "$expression" in
+    '.expected_account_id | select(type == "string" and length > 0)') printf '123456789012\n' ;;
+    '.aws_region | select(type == "string" and length > 0)') printf 'eu-central-1\n' ;;
+    '.deployment_principal_arn | select(type == "string" and length > 0)') printf 'arn:aws:iam::123456789012:user/deploy-user\n' ;;
+    '.Account | select(type == "string" and length > 0)') [[ "$AWS_RESPONSE_MODE" == valid ]] && printf '%s\n' "$AWS_ACCOUNT" ;;
+    '.Arn | select(type == "string" and length > 0)') [[ "$AWS_RESPONSE_MODE" == valid ]] && printf '%s\n' "$AWS_ARN" ;;
+    *) return 1 ;;
+  esac
+}
 
-AWS_ACCOUNT='not-an-account'
-AWS_ARN='not-an-arn'
-if verify_expected_aws_identity >/dev/null 2>&1; then
-  fail "malformed identity was accepted"
-fi
+assert_identity_accepted() {
+  local account="$1"
+  local arn="$2"
+  local description="$3"
+  AWS_ACCOUNT="$account"
+  AWS_ARN="$arn"
+  AWS_RESPONSE_MODE='valid'
+  : >"$AWS_CALL_LOG"
+  verify_expected_aws_identity >/dev/null || fail "$description was rejected"
+  [[ "$(wc -l <"$AWS_CALL_LOG")" -eq 1 ]] || fail "$description did not call AWS CLI exactly once"
+}
 
-AWS_FAILURE='true'
+assert_identity_rejected() {
+  local account="$1"
+  local arn="$2"
+  local description="$3"
+  AWS_ACCOUNT="$account"
+  AWS_ARN="$arn"
+  AWS_RESPONSE_MODE='valid'
+  : >"$AWS_CALL_LOG"
+  if verify_expected_aws_identity >/dev/null 2>&1; then
+    fail "$description was accepted"
+  fi
+  [[ "$(wc -l <"$AWS_CALL_LOG")" -eq 1 ]] || fail "$description did not call AWS CLI exactly once"
+}
+
+assert_identity_accepted '123456789012' 'arn:aws:iam::123456789012:user/deploy-user' 'expected IAM user'
+assert_identity_accepted '123456789012' 'arn:aws-us-gov:iam::123456789012:role/team/DeploymentRole' 'expected IAM role'
+assert_identity_accepted '123456789012' 'arn:aws-cn:sts::123456789012:assumed-role/DeploymentRole/github-actions' 'expected assumed role'
+
+assert_identity_rejected '324621154117' 'arn:aws:sts::324621154117:assumed-role/DeploymentRole/session' 'wrong-account assumed role'
+assert_identity_rejected '324621154117' 'arn:aws:iam::324621154117:user/wrong' 'wrong-account IAM user'
+assert_identity_rejected '123456789012' 'arn:aws:iam::123456789012:root' 'root identity'
+assert_identity_rejected '123456789012' 'arn:aws:sts::123456789012:federated-user/example' 'federated user'
+assert_identity_rejected '123456789012' 'arn:aws:iam::123456789012:role/' 'malformed ARN'
+
+AWS_RESPONSE_MODE='missing'
+: >"$AWS_CALL_LOG"
 if verify_expected_aws_identity >/dev/null 2>&1; then
   fail "missing identity was accepted"
+fi
+[[ "$(wc -l <"$AWS_CALL_LOG")" -eq 1 ]] || fail "missing identity did not call AWS CLI exactly once"
+
+AWS_RESPONSE_MODE='failure'
+: >"$AWS_CALL_LOG"
+if verify_expected_aws_identity >/dev/null 2>&1; then
+  fail "AWS CLI failure was accepted"
+fi
+[[ "$(wc -l <"$AWS_CALL_LOG")" -eq 1 ]] || fail "AWS CLI failure did not call AWS CLI exactly once"
+
+# shellcheck disable=SC2123  # Intentionally hide every jq executable for this case.
+if (unset -f jq; PATH=/nonexistent; require_json_parser >/dev/null 2>&1); then
+  fail "missing jq was accepted"
 fi
 
 EXPECTED_AWS_ACCOUNT_ID='123456789012'

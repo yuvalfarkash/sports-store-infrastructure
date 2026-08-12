@@ -2,27 +2,25 @@
 
 AWS_ENVIRONMENT_FILE="${AWS_ENVIRONMENT_FILE:-$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../config" && pwd)/aws-environment.json}"
 
-json_string_value() {
-  local json="$1"
-  local key="$2"
-  local value
-
-  value="$(printf '%s' "$json" | tr -d '\r\n' | sed -nE "s/.*\"${key}\"[[:space:]]*:[[:space:]]*\"([^\"]*)\".*/\\1/p")"
-  [[ -n "$value" ]] || return 1
-  printf '%s' "$value"
+require_json_parser() {
+  command -v jq >/dev/null 2>&1 || {
+    printf 'ERROR: jq is required to validate AWS identity JSON safely. No deployment should continue.\n' >&2
+    return 1
+  }
 }
 
 load_aws_environment() {
   local configuration
 
+  require_json_parser || return 1
   [[ -r "$AWS_ENVIRONMENT_FILE" ]] || {
     printf 'ERROR: AWS environment configuration is unreadable: %s\n' "$AWS_ENVIRONMENT_FILE" >&2
     return 1
   }
   configuration="$(<"$AWS_ENVIRONMENT_FILE")"
-  EXPECTED_AWS_ACCOUNT_ID="$(json_string_value "$configuration" expected_account_id)" || return 1
-  EXPECTED_AWS_REGION="$(json_string_value "$configuration" aws_region)" || return 1
-  DEPLOYMENT_PRINCIPAL_ARN="$(json_string_value "$configuration" deployment_principal_arn)" || return 1
+  EXPECTED_AWS_ACCOUNT_ID="$(jq -er '.expected_account_id | select(type == "string" and length > 0)' <<<"$configuration")" || return 1
+  EXPECTED_AWS_REGION="$(jq -er '.aws_region | select(type == "string" and length > 0)' <<<"$configuration")" || return 1
+  DEPLOYMENT_PRINCIPAL_ARN="$(jq -er '.deployment_principal_arn | select(type == "string" and length > 0)' <<<"$configuration")" || return 1
 
   [[ "$EXPECTED_AWS_ACCOUNT_ID" =~ ^[0-9]{12}$ ]] || {
     printf 'ERROR: configured expected AWS account ID is malformed.\n' >&2
@@ -35,16 +33,21 @@ load_aws_environment() {
 }
 
 verify_expected_aws_identity() {
-  local actual_account caller_arn
+  local identity_json actual_account caller_arn iam_identity_pattern assumed_role_pattern
 
   load_aws_environment || return 1
-  actual_account="$(aws sts get-caller-identity --query Account --output text)" || {
+  identity_json="$(aws sts get-caller-identity --output json)" || {
     printf 'ERROR: unable to determine active AWS identity; expected account %s. No deployment should continue.\n' \
       "$EXPECTED_AWS_ACCOUNT_ID" >&2
     return 1
   }
-  caller_arn="$(aws sts get-caller-identity --query Arn --output text)" || {
-    printf 'ERROR: unable to determine caller ARN; expected account %s. No deployment should continue.\n' \
+  actual_account="$(jq -er '.Account | select(type == "string" and length > 0)' <<<"$identity_json")" || {
+    printf 'ERROR: AWS identity response has no valid Account field; expected account %s. No deployment should continue.\n' \
+      "$EXPECTED_AWS_ACCOUNT_ID" >&2
+    return 1
+  }
+  caller_arn="$(jq -er '.Arn | select(type == "string" and length > 0)' <<<"$identity_json")" || {
+    printf 'ERROR: AWS identity response has no valid Arn field; expected account %s. No deployment should continue.\n' \
       "$EXPECTED_AWS_ACCOUNT_ID" >&2
     return 1
   }
@@ -53,7 +56,10 @@ verify_expected_aws_identity() {
   printf 'Actual AWS account: %s\n' "$actual_account"
   printf 'Caller ARN: %s\n' "$caller_arn"
 
-  if [[ ! "$actual_account" =~ ^[0-9]{12}$ || ! "$caller_arn" =~ ^arn:aws[a-z-]*:iam::[0-9]{12}:(user|role|assumed-role)/.+$ ]]; then
+  iam_identity_pattern="^arn:(aws|aws-us-gov|aws-cn):iam::${actual_account}:(user|role)/[A-Za-z0-9+=,.@_-]+(/[A-Za-z0-9+=,.@_-]+)*$"
+  assumed_role_pattern="^arn:(aws|aws-us-gov|aws-cn):sts::${actual_account}:assumed-role/[A-Za-z0-9+=,.@_-]+/[A-Za-z0-9+=,.@_-]+$"
+  if [[ ! "$actual_account" =~ ^[0-9]{12}$ ]] ||
+    [[ ! "$caller_arn" =~ $iam_identity_pattern && ! "$caller_arn" =~ $assumed_role_pattern ]]; then
     printf 'ERROR: AWS identity response is malformed. No deployment should continue.\n' >&2
     return 1
   fi

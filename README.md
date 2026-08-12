@@ -7,6 +7,9 @@ default approved deployment and EKS administration principal is
 `arn:aws:iam::123456789012:user/deploy-user`. Both Terraform roots and every
 mutating operational script reject any other active AWS account before changes
 begin. Verify identity with `aws sts get-caller-identity --output json`.
+The scripts require `jq` and accept structurally valid IAM user, IAM role, or
+STS assumed-role caller identities only; the returned account must still be
+`123456789012`.
 
 Do not commit long-lived access keys. GitHub Actions assumes the
 Terraform-created ECR publishing role through OIDC and temporary credentials.
@@ -14,6 +17,12 @@ The six application repositories require the non-secret Actions variables
 `AWS_REGION=eu-central-1` and `AWS_ECR_PUBLISH_ROLE_ARN=<Terraform role ARN>`.
 `deploy.sh` sets and reads back both variables on only those repositories before
 dispatching workflows; it never configures the local-only Gateway.
+
+Sports Store workflows pin Trivy Action `v0.36.0` to the verified immutable
+commit `a9c7b0f06e461e9d4b4d1711f154ee024b8d7ab8`, following Aqua's
+[official supply-chain advisory](https://github.com/aquasecurity/trivy/security/advisories/GHSA-69fq-xp46-6x23).
+Review GitHub workflow logs from March 19-20, 2026 and rotate potentially
+exposed credentials if evidence shows an affected mutable tag ran then.
 
 the operator's account currently has no GitHub Actions OIDC provider. The base Terraform
 state owns and creates the single provider for
@@ -72,6 +81,7 @@ were removed to fit the current cluster resource limits.
 - AWS CLI and an AWS account with sufficient provisioning permissions
 - Git and access to the `sports-store-infrastructure` repository
 - Bash, OpenSSL, and AWS CLI for the one-time application-secret bootstrap
+- `jq` for structured AWS configuration and caller-identity validation
 - `kubectl` and GitHub CLI (`gh`) for the deployment workflow
 
 ## HCP Terraform setup

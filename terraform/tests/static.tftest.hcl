@@ -35,6 +35,8 @@ run "expected_account_configuration" {
     target = [
       terraform_data.expected_aws_account,
       aws_ecr_repository.services,
+      aws_iam_openid_connect_provider.github_actions,
+      data.aws_iam_policy_document.github_ecr_publisher_assume_role,
     ]
   }
 
@@ -46,6 +48,43 @@ run "expected_account_configuration" {
   assert {
     condition     = length(local.microservices) == 6 && !contains(local.microservices, "sports-store-gateway")
     error_message = "Production ECR inventory must contain six images and exclude Gateway."
+  }
+
+  assert {
+    condition     = aws_iam_openid_connect_provider.github_actions.url == "https://token.actions.githubusercontent.com"
+    error_message = "The managed GitHub Actions OIDC provider must use the exact GitHub token URL."
+  }
+
+  assert {
+    condition     = toset(aws_iam_openid_connect_provider.github_actions.client_id_list) == toset(["sts.amazonaws.com"])
+    error_message = "The managed GitHub Actions OIDC provider must have only the AWS STS audience."
+  }
+
+  assert {
+    condition     = var.github_organization == "sports-store-devops-team"
+    error_message = "GitHub publishing trust must remain restricted to the Sports Store organization."
+  }
+
+  assert {
+    condition = toset(local.github_oidc_subjects) == toset([
+      "repo:sports-store-devops-team/sports-store-frontend:ref:refs/heads/main",
+      "repo:sports-store-devops-team/sports-store-auth-service:ref:refs/heads/main",
+      "repo:sports-store-devops-team/sports-store-catalog-service:ref:refs/heads/main",
+      "repo:sports-store-devops-team/sports-store-cart-service:ref:refs/heads/main",
+      "repo:sports-store-devops-team/sports-store-order-service:ref:refs/heads/main",
+      "repo:sports-store-devops-team/sports-store-payment-service:ref:refs/heads/main",
+    ])
+    error_message = "OIDC subjects must be exactly the six approved application repositories on main."
+  }
+
+  assert {
+    condition = (
+      length(local.github_oidc_subjects) == 6 &&
+      alltrue([for subject in local.github_oidc_subjects : endswith(subject, ":ref:refs/heads/main")]) &&
+      alltrue([for subject in local.github_oidc_subjects : !strcontains(subject, "*")]) &&
+      alltrue([for subject in local.github_oidc_subjects : !strcontains(subject, "sports-store-gateway")])
+    )
+    error_message = "OIDC trust must not include Gateway, wildcard identities, or non-main refs."
   }
 
 }

@@ -12,8 +12,33 @@ grep -q 'targetRevision = "main"' terraform/automation.tf || fail "Argo CD no lo
 grep -q 'global.applicationImageRegistry' terraform/automation.tf || fail "Argo CD no longer injects the account-derived registry"
 grep -q 'deployment_principal_arn' config/aws-environment.json || fail "authoritative deployment principal is missing"
 grep -q '\[local.deployment_principal\]' terraform/eks-iam.tf || fail "deployment principal is not granted EKS access"
+
+oidc_provider_count="$(grep -RhsEc '^resource "aws_iam_openid_connect_provider" ' terraform --include='*.tf' --exclude-dir=.terraform | awk '{ total += $1 } END { print total + 0 }')"
+[[ "$oidc_provider_count" -eq 1 ]] || fail "exactly one managed GitHub OIDC provider must be declared"
+if grep -Rqs '^data "aws_iam_openid_connect_provider" ' terraform --include='*.tf' --exclude-dir=.terraform; then
+  fail "GitHub OIDC must be managed rather than looked up as a prerequisite"
+fi
+grep -q 'url[[:space:]]*= "https://token.actions.githubusercontent.com"' terraform/iam-oidc.tf ||
+  fail "managed GitHub OIDC provider URL is incorrect"
+grep -q 'client_id_list[[:space:]]*= \["sts.amazonaws.com"\]' terraform/iam-oidc.tf ||
+  fail "managed GitHub OIDC provider must use only the AWS STS audience"
+grep -q 'identifiers = \[aws_iam_openid_connect_provider.github_actions.arn\]' terraform/iam-oidc.tf ||
+  fail "publisher role trust does not reference the managed OIDC provider ARN"
+grep -A 3 'variable = "token.actions.githubusercontent.com:aud"' terraform/iam-oidc.tf |
+  grep -q 'values[[:space:]]*= \["sts.amazonaws.com"\]' || fail "OIDC audience condition is not restricted to AWS STS"
 grep -q 'repo:${var.github_organization}/${repository}:ref:refs/heads/main' terraform/iam-oidc.tf || fail "OIDC main-branch subject is missing"
-if grep -q 'StringLike' terraform/iam-oidc.tf || grep -q '@\*' terraform/iam-oidc.tf; then
+grep -Eq 'default[[:space:]]*= "sports-store-devops-team"' terraform/variables.tf || fail "OIDC organization trust changed"
+for repository in \
+  sports-store-frontend \
+  sports-store-auth-service \
+  sports-store-catalog-service \
+  sports-store-cart-service \
+  sports-store-order-service \
+  sports-store-payment-service; do
+  grep -q "\"$repository\"" terraform/variables.tf || fail "approved OIDC repository is missing: $repository"
+done
+oidc_trust="$(sed -n '1,/^resource "aws_iam_role" "github_ecr_publisher"/p' terraform/iam-oidc.tf)"
+if grep -q 'StringLike' <<<"$oidc_trust" || grep -q '@\*' <<<"$oidc_trust" || grep -q '"\*"' <<<"$oidc_trust"; then
   fail "OIDC trust contains wildcard subject matching"
 fi
 grep -q -- '--event push' deploy.sh || fail "deploy does not preserve the main-push publication gate"

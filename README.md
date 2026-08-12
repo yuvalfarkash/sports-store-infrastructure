@@ -15,6 +15,20 @@ The six application repositories require the non-secret Actions variables
 `deploy.sh` sets and reads back both variables on only those repositories before
 dispatching workflows; it never configures the local-only Gateway.
 
+the operator's account currently has no GitHub Actions OIDC provider. The base Terraform
+state owns and creates the single provider for
+`https://token.actions.githubusercontent.com`, with `sts.amazonaws.com` as its
+only client ID, before creating the ECR publishing role that references its ARN.
+The provider configuration intentionally omits TLS thumbprints: the pinned AWS
+provider supports omission, allowing AWS IAM to use its trusted root CA library
+instead of storing a brittle SHA-1 thumbprint.
+
+The OIDC provider is account-wide. Do not manually delete it while GitHub
+Actions depends on it. Terraform's dependency graph removes the publishing role
+and its policies before the provider during a base-state destroy. If another
+project later shares this provider, reconsider its state ownership and destroy
+lifecycle before destroying this base Terraform state.
+
 Terraform in `terraform/` defines the Milestone 4 AWS foundation for Sports Store. It creates networking, an EKS control plane and managed node group, managed EKS add-ons, workload-specific IAM roles, six ECR repositories, the application secret container, and External Secrets Operator. The isolated `terraform/cloudfront/` root manages the public CloudFront distribution after Kubernetes has produced an ALB hostname. Application workloads remain GitOps-managed rather than being declared directly in Terraform.
 
 ## Architecture

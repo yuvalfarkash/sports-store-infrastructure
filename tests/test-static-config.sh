@@ -57,7 +57,6 @@ grep -A 3 'variable = "token.actions.githubusercontent.com:aud"' terraform/iam-o
 grep -q 'repo:${var.github_organization}/${repository}:ref:refs/heads/main' terraform/iam-oidc.tf || fail "OIDC main-branch subject is missing"
 grep -Eq 'default[[:space:]]*= "sports-store-devops-team"' terraform/variables.tf || fail "OIDC organization trust changed"
 for repository in \
-  sports-store-frontend \
   sports-store-auth-service \
   sports-store-catalog-service \
   sports-store-cart-service \
@@ -65,6 +64,27 @@ for repository in \
   sports-store-payment-service; do
   grep -q "\"$repository\"" terraform/variables.tf || fail "approved OIDC repository is missing: $repository"
 done
+grep -q 'repo:sports-store-devops-team/sports-store-frontend:ref:refs/heads/main' terraform/static-publication-iam.tf ||
+  fail "frontend static publication trust is not restricted to main"
+grep -q 'resource "aws_s3_bucket" "static_site"' terraform/static-site.tf || fail "private static bucket is missing"
+grep -q 'force_destroy = true' terraform/static-site.tf || fail "static bucket must be removable with course teardown"
+for control in block_public_acls block_public_policy ignore_public_acls restrict_public_buckets; do
+  grep -q "${control}[[:space:]]*= true" terraform/static-site.tf || fail "missing S3 public access block: $control"
+done
+grep -q 'origin_access_control_origin_type = "s3"' terraform/cloudfront/main.tf || fail "CloudFront S3 OAC is missing"
+grep -q 'signing_behavior[[:space:]]*= "always"' terraform/cloudfront/main.tf || fail "CloudFront OAC signing is not mandatory"
+grep -q 'variable = "AWS:SourceArn"' terraform/cloudfront/main.tf || fail "CloudFront bucket policy lacks SourceArn restriction"
+grep -A 3 'variable = "AWS:SourceArn"' terraform/cloudfront/main.tf |
+  grep -q 'values[[:space:]]*= \[aws_cloudfront_distribution.sports_store\[0\].arn\]' ||
+  fail "CloudFront bucket policy does not use the exact managed distribution ARN"
+grep -A 12 'resource "aws_s3_bucket_policy" "cloudfront_static_site"' terraform/cloudfront/main.tf |
+  grep -q 'policy = data.aws_iam_policy_document.cloudfront_static_site\[0\].json' ||
+  fail "S3 bucket policy is not sourced from the restricted CloudFront policy document"
+grep -q 'path_pattern[[:space:]]*= "/api/\*"' terraform/cloudfront/main.tf || fail "API behavior missing"
+grep -q 'path_pattern[[:space:]]*= "/assets/\*"' terraform/cloudfront/main.tf || fail "asset behavior missing"
+if grep -Rqs 'website_endpoint\|website {' terraform --include='*.tf' --exclude-dir=.terraform; then
+  fail "S3 website hosting must not be configured"
+fi
 oidc_trust="$(sed -n '1,/^resource "aws_iam_role" "github_ecr_publisher"/p' terraform/iam-oidc.tf)"
 if grep -q 'StringLike' <<<"$oidc_trust" || grep -q '@\*' <<<"$oidc_trust" || grep -q '"\*"' <<<"$oidc_trust"; then
   fail "OIDC trust contains wildcard subject matching"

@@ -79,13 +79,19 @@ terraform() {
         fail "Terraform init arguments were not safely quoted"
       ;;
     2)
-      [[ "$#" == 6 ]] || fail "Terraform apply arguments were split unexpectedly"
+      [[ "$#" == 9 ]] || fail "Terraform apply arguments were split unexpectedly"
       [[ "$1" == "-chdir=$CLOUDFRONT_DIR" && "$2" == "apply" ]] ||
         fail "Terraform apply directory or command was incorrect"
       [[ "$5" == "-var=alb_origin_hostname=$VALID_HOSTNAME" ]] ||
         fail "ALB hostname was not passed as one safely quoted Terraform argument"
       [[ "$6" == "-var=aws_region=eu-central-1" ]] ||
         fail "AWS region was not passed as one safely quoted Terraform argument"
+      [[ "$7" == "-var=static_site_bucket_name=sports-store-static-123456789012-eu-central-1" ]] ||
+        fail "S3 bucket name was not passed safely"
+      [[ "$8" == "-var=static_site_bucket_arn=arn:aws:s3:::sports-store-static-123456789012-eu-central-1" ]] ||
+        fail "S3 bucket ARN was not passed safely"
+      [[ "$9" == "-var=static_site_bucket_regional_domain_name=sports-store-static-123456789012-eu-central-1.s3.eu-central-1.amazonaws.com" ]] ||
+        fail "S3 regional domain was not passed safely"
       ;;
     *)
       fail "apply_cloudfront made an unexpected Terraform call"
@@ -93,7 +99,12 @@ terraform() {
   esac
 }
 
-apply_cloudfront "$VALID_HOSTNAME" eu-central-1 >/dev/null
+apply_cloudfront \
+  "$VALID_HOSTNAME" \
+  eu-central-1 \
+  sports-store-static-123456789012-eu-central-1 \
+  arn:aws:s3:::sports-store-static-123456789012-eu-central-1 \
+  sports-store-static-123456789012-eu-central-1.s3.eu-central-1.amazonaws.com >/dev/null
 [[ "$TERRAFORM_CALLS" == 2 ]] || fail "apply_cloudfront did not make exactly two Terraform calls"
 
 printf 'CloudFront workflow helper tests passed.\n'

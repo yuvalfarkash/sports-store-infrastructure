@@ -50,15 +50,24 @@ gh() {
 }
 
 ROLE_ARN='arn:aws:iam::123456789012:role/sports-store-github-ecr-publisher'
-configure_github_actions_variables eu-central-1 "$ROLE_ARN" || fail "variable configuration failed"
-configure_github_actions_variables eu-central-1 "$ROLE_ARN" || fail "idempotent configuration failed"
+STATIC_ROLE_ARN='arn:aws:iam::123456789012:role/sports-store-github-static-site-publisher'
+STATIC_BUCKET='sports-store-static-123456789012-eu-central-1'
+configure_frontend_github_actions_variables eu-central-1 "$STATIC_ROLE_ARN" "$STATIC_BUCKET" || fail "frontend variable configuration failed"
+configure_backend_github_actions_variables eu-central-1 "$ROLE_ARN" || fail "backend variable configuration failed"
+configure_frontend_github_actions_variables eu-central-1 "$STATIC_ROLE_ARN" "$STATIC_BUCKET" || fail "idempotent frontend configuration failed"
+configure_backend_github_actions_variables eu-central-1 "$ROLE_ARN" || fail "idempotent backend configuration failed"
 
-[[ ${#VARIABLES[@]} -eq 12 ]] || fail "expected two variables for six repositories"
-for repository in "${APPLICATION_REPOSITORIES[@]}"; do
+[[ ${#VARIABLES[@]} -eq 13 ]] || fail "expected three frontend and two variables for five backend repositories"
+for repository in "${BACKEND_REPOSITORIES[@]}"; do
   full_name="$GITHUB_ORGANIZATION/$repository"
   [[ "${VARIABLES["$full_name:AWS_REGION"]}" == 'eu-central-1' ]] || fail "region missing for $repository"
   [[ "${VARIABLES["$full_name:AWS_ECR_PUBLISH_ROLE_ARN"]}" == "$ROLE_ARN" ]] || fail "role missing for $repository"
 done
+frontend_repository="$GITHUB_ORGANIZATION/sports-store-frontend"
+[[ "${VARIABLES["$frontend_repository:AWS_REGION"]}" == 'eu-central-1' ]] || fail "frontend region missing"
+[[ "${VARIABLES["$frontend_repository:AWS_STATIC_SITE_ROLE_ARN"]}" == "$STATIC_ROLE_ARN" ]] || fail "frontend role missing"
+[[ "${VARIABLES["$frontend_repository:AWS_STATIC_SITE_BUCKET"]}" == "$STATIC_BUCKET" ]] || fail "frontend bucket missing"
+[[ -z "${VARIABLES["$frontend_repository:AWS_ECR_PUBLISH_ROLE_ARN"]:-}" ]] || fail "frontend received shared ECR role"
 if printf '%s\n' "${SET_REPOSITORIES[@]}" | grep -q 'sports-store-gateway'; then
   fail "Gateway repository was configured"
 fi

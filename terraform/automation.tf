@@ -15,12 +15,11 @@ locals {
 
   # name -> ECR repository, matching the Helm chart's per-service value paths.
   argocd_managed_images = {
-    frontend = "sports-store-frontend"
-    auth     = "sports-store-auth-service"
-    catalog  = "sports-store-catalog-service"
-    cart     = "sports-store-cart-service"
-    order    = "sports-store-order-service"
-    payment  = "sports-store-payment-service"
+    auth    = "sports-store-auth-service"
+    catalog = "sports-store-catalog-service"
+    cart    = "sports-store-cart-service"
+    order   = "sports-store-order-service"
+    payment = "sports-store-payment-service"
   }
 
   argocd_image_list = join(",", [
@@ -33,8 +32,6 @@ locals {
       "argocd-image-updater.argoproj.io/image-list"        = local.argocd_image_list
       "argocd-image-updater.argoproj.io/write-back-method" = "argocd"
 
-      "argocd-image-updater.argoproj.io/frontend.helm.image-name" = "frontend.image.repository"
-      "argocd-image-updater.argoproj.io/frontend.helm.image-tag"  = "frontend.image.tag"
     },
     { for name in ["auth", "catalog", "cart", "order", "payment"] :
       "argocd-image-updater.argoproj.io/${name}.helm.image-name" => "services.${name}.image.repository"
@@ -42,7 +39,7 @@ locals {
     { for name in ["auth", "catalog", "cart", "order", "payment"] :
       "argocd-image-updater.argoproj.io/${name}.helm.image-tag" => "services.${name}.image.tag"
     },
-    { for name in ["frontend", "auth", "catalog", "cart", "order", "payment"] :
+    { for name in ["auth", "catalog", "cart", "order", "payment"] :
       "argocd-image-updater.argoproj.io/${name}.update-strategy" => "latest"
     },
   )

@@ -11,12 +11,13 @@ The scripts require `jq` and accept structurally valid IAM user, IAM role, or
 STS assumed-role caller identities only; the returned account must still be
 `123456789012`.
 
-Do not commit long-lived access keys. GitHub Actions assumes the
-Terraform-created ECR publishing role through OIDC and temporary credentials.
-The six application repositories require the non-secret Actions variables
-`AWS_REGION=eu-central-1` and `AWS_ECR_PUBLISH_ROLE_ARN=<Terraform role ARN>`.
-`deploy.sh` sets and reads back both variables on only those repositories before
-dispatching workflows; it never configures the local-only Gateway.
+Do not commit long-lived access keys. GitHub Actions assumes Terraform-created
+roles through OIDC and temporary credentials. The five backend repositories use
+`AWS_REGION` and `AWS_ECR_PUBLISH_ROLE_ARN`. The frontend uses `AWS_REGION`,
+`AWS_STATIC_SITE_ROLE_ARN`, and `AWS_STATIC_SITE_BUCKET`; its dedicated role can
+only synchronize objects in the exact static-site bucket. `deploy.sh` sets and
+reads back these non-secret variables before rerunning the latest `main` push
+workflows. It never configures the local-only Gateway.
 
 Sports Store workflows pin Trivy Action `v0.36.0` to the verified immutable
 commit `a9c7b0f06e461e9d4b4d1711f154ee024b8d7ab8`, following Aqua's
@@ -38,7 +39,7 @@ and its policies before the provider during a base-state destroy. If another
 project later shares this provider, reconsider its state ownership and destroy
 lifecycle before destroying this base Terraform state.
 
-Terraform in `terraform/` defines the Milestone 4 AWS foundation for Sports Store. It creates networking, an EKS control plane and managed node group, managed EKS add-ons, workload-specific IAM roles, six ECR repositories, the application secret container, and External Secrets Operator. The isolated `terraform/cloudfront/` root manages the public CloudFront distribution after Kubernetes has produced an ALB hostname. Application workloads remain GitOps-managed rather than being declared directly in Terraform.
+Terraform in `terraform/` defines the AWS foundation: networking, EKS, add-ons, workload IAM, five backend ECR repositories, the private static-site S3 bucket, publication roles, the application secret container, and External Secrets Operator. The isolated `terraform/cloudfront/` root manages the distribution, S3 OAC, CloudFront Function, and distribution-dependent bucket policy after Kubernetes has produced an ALB hostname. Application workloads remain GitOps-managed.
 
 ## Architecture
 
@@ -56,19 +57,21 @@ Terraform in `terraform/` defines the Milestone 4 AWS foundation for Sports Stor
 - EKS-managed CoreDNS, kube-proxy, VPC CNI, and EBS CSI add-ons
 - Dedicated IRSA roles for EBS CSI, AWS Load Balancer Controller, and External Secrets Operator
 - An AWS Secrets Manager container named `sports-store/production/app`; Terraform creates no secret version
-- Six immutable, scan-on-push ECR repositories
-- A GitHub Actions OIDC role limited to ECR publishing from approved `main` branches
-- A low-cost `PriceClass_100` CloudFront distribution using its default domain and certificate
+- Five immutable, scan-on-push backend ECR repositories
+- A shared backend ECR publisher role plus a dedicated least-privilege frontend S3 publisher role, both restricted to approved `main` subjects
+- A private, SSE-S3-encrypted, bucket-owner-enforced static bucket with all public-access blocks enabled
+- A low-cost `PriceClass_100` CloudFront distribution using its default domain and certificate, signed S3 OAC requests, and an HTTP ALB API origin
 
 All Terraform-managed AWS resources receive the `Project=sports-store`, `Environment=dev`, and `ManagedBy=terraform` tags where AWS supports tagging.
 
 The external request path is:
 
 ```text
-User -> CloudFront -> ALB -> Ingress -> frontend or application service
+User -> CloudFront -> private S3 (frontend and static assets)
+User -> CloudFront /api/* -> ALB -> Ingress -> FastAPI services
 ```
 
-Viewers are redirected from HTTP to HTTPS at CloudFront. CloudFront currently connects to the internet-facing ALB over HTTP. The ALB remains directly accessible by design for troubleshooting; there is no secret origin header, CloudFront-only security-group rule, custom domain, Route 53 record, or ACM certificate.
+Viewers are redirected from HTTP to HTTPS. CloudFront signs S3 requests with OAC; direct S3 access is blocked and no website endpoint is configured. `/assets/*` uses long caching for Vite content hashes, while the default S3 behavior does not retain `index.html`; extensionless SPA routes are rewritten by a viewer-request function. `/api/*` remains uncached and forwards required methods, cookies, queries, authorization, and CORS headers to the internet-facing ALB over HTTP. Direct ALB access remains available only for API troubleshooting. There is no custom domain, Route 53 record, ACM certificate, or ALB HTTPS in this version.
 
 CloudWatch collects EKS control-plane logs. Separately, four Terraform-managed
 Argo CD Applications reconcile monitoring (wave 0), Loki 18.5.0 (wave 1),
@@ -151,12 +154,14 @@ The script performs this sequence:
 
 1. Verifies account `123456789012` and validates both state roots.
 2. Applies the base root in the operator's account.
-3. Reads the OIDC publishing-role ARN, configures and verifies both Actions variables on the six approved repositories, then reruns and waits for each repository's latest `main` push workflow. This preserves the workflows' push-only publication gate; a dispatch event would validate without publishing.
+3. Reads and validates the static bucket and both publisher-role outputs. It configures the frontend's three static-publication variables, then the five backends' ECR variables, and reruns and waits for each latest `main` push workflow. This preserves the push-only publication gates; a dispatch event validates without publishing. The first frontend `main` run may fail before Terraform creates/configures the bucket and role, so this controlled rerun is intentional.
 4. Bootstraps the first Secrets Manager version without printing its values.
 5. Configures `kubectl`, waits for Argo CD and the ALB with bounded polling, and validates the hostname.
-6. Applies the separate CloudFront root and prints both final URLs.
+6. Applies the separate CloudFront root with the validated ALB and S3 inputs, then prints the CloudFront HTTPS URL and direct ALB API troubleshooting URL. `deploy.sh` never uploads frontend files; GitHub Actions owns the build and S3 synchronization.
 
 On a clean deployment the CloudFront root contains no distribution until stage 2 receives a valid hostname. On a repeated deployment, the base root cannot alter the distribution because it has separate state; stage 2 idempotently reconciles the existing distribution with the current Ingress hostname. This also accommodates an ALB replacement.
+
+Because AWS no longer runs a frontend Kubernetes workload, the base configuration removes the now-unused `sports-store-frontend` ECR repository and its shared ECR publication permission. A future reviewed base apply will delete that repository and any images it contains (`force_delete = true`); no live deletion was performed while implementing this change.
 
 Terraform installs platform operators and the Argo CD bootstrap Application, but it does not declare the Sports Store Deployments, Services, or MongoDB workload. The first deployment still requires the manual application-secret bootstrap described below; the deployment script never reads or prints secret values.
 
@@ -173,13 +178,13 @@ terraform -chdir=terraform/cloudfront output -raw cloudfront_domain_name
 terraform -chdir=terraform/cloudfront output -raw cloudfront_https_url
 ```
 
-The outputs also expose the cluster endpoint, AWS region, VPC and subnet IDs, ECR URLs, GitHub ECR publishing role ARN, and EBS CSI role ARN. All outputs are metadata and contain no secret value. The complete public application address is the `cloudfront_https_url` output.
+The outputs also expose the cluster endpoint, AWS region, VPC and subnet IDs, backend ECR URLs, both publishing role ARNs, the static bucket name/ARN/regional domain, and EBS CSI role ARN. All outputs are non-sensitive metadata. The complete public application address is `cloudfront_https_url`.
 
 ## CloudFront behavior
 
-The default behavior allows `GET`, `HEAD`, `OPTIONS`, `PUT`, `POST`, `PATCH`, and `DELETE`. CloudFront's schema marks only `GET` and `HEAD` as cacheable methods, but the AWS-managed `CachingDisabled` policy uses zero TTLs so application responses are not retained. This avoids caching private or authenticated responses while the application is first placed behind the CDN.
+The first ordered behavior, `/api/*`, targets the ALB, permits every required application method, uses AWS-managed `CachingDisabled`, and uses `AllViewerExceptHostHeader` to preserve query strings, cookies, authorization, CORS preflights, and other viewer headers without forwarding the viewer Host. Authenticated and private API responses are never cached.
 
-The AWS-managed `AllViewerExceptHostHeader` origin request policy forwards all viewer query strings, cookies, the `Authorization` header, CORS preflight headers, and other viewer headers. It deliberately omits the original viewer `Host` header so CloudFront supplies the ALB origin host instead. `OPTIONS` reaches the selected backend like every other allowed method. Compression is enabled, IPv6 is enabled, and direct ALB access is unchanged.
+The second behavior, `/assets/*`, targets private S3, permits only safe reads, forwards no cookies or authorization, enables compression, and caches Vite content-hashed assets for one year. The default behavior also targets S3 but uses zero TTLs so `index.html` becomes visible without broad invalidations. Its CloudFront Function rewrites only extensionless frontend paths to `/index.html`, preserves query strings, and leaves `/api/*`, `/assets/*`, and filenames unchanged.
 
 ## Application secret workflow
 
@@ -228,18 +233,19 @@ An expected first plan creates the Secrets Manager metadata container, the scope
 Confirm persistent-data and backup requirements, ensure both Terraform states are available, and run `bash destroy.sh` from the authenticated workstation. Do not remove the Ingress first. The script uses this order:
 
 1. Verifies account `123456789012` and rejects unexpected base or CloudFront state before deletion.
-2. Initializes the isolated CloudFront root and, if its state contains resources, runs `terraform destroy`. The AWS provider disables and deletes only the state-managed distribution and waits for CloudFront; if stage 2 never ran, this is a no-op.
+2. Initializes the isolated CloudFront root and, if its state contains resources, destroys the distribution, OAC, bucket policy, cache policy, and rewrite function. If stage 2 never ran, this is a no-op. The bucket policy disappears before the base-owned bucket.
 3. Selects the exact EKS cluster from base Terraform outputs, deletes the Argo CD Application so self-heal cannot recreate the Ingress, captures and validates the Ingress hostname, and deletes the namespace's Ingress.
 4. Polls for the exact captured ALB DNS name for at most 30 attempts at 10-second intervals. It stops with an error instead of destroying the VPC if the ALB remains.
-5. Performs the scoped controller-security-group cleanup, destroys the operator's base state, and reports retained available EBS volumes.
+5. Performs the scoped controller-security-group cleanup, destroys the operator's base state, and reports retained available EBS volumes. The base destroy permanently deletes all static files because `force_destroy = true`; scripts never delete the bucket or objects through AWS CLI.
 
 To add another EKS administrator later, supply an explicit same-account IAM user
 or role ARN through `additional_eks_principal_arns` in an approved, uncommitted
 Terraform variable file. Validation rejects account root, wildcards, and other
-accounts. S3 frontend hosting and EKS node-sizing changes remain separate
-future tasks.
+accounts. EKS node-sizing changes remain a separate future task.
 
 CloudFront is never created or deleted with AWS CLI. The separate CloudFront state is intentionally destroyed before Kubernetes or ALB changes, works when the distribution or ALB is already absent, and keeps normal create/destroy operations idempotent. Do not discard either Terraform state before completing this sequence.
+
+Both Terraform states remain required: base owns the bucket, while CloudFront state owns the policy that grants distribution access. Normal apply order is base, frontend publication and API readiness, then CloudFront. Normal destroy order is CloudFront, Argo CD/Ingress/ALB cleanup, then base.
 
 CloudFront creation and updates commonly need several minutes to propagate globally. Disabling and deleting a distribution can take 15-30 minutes or longer; Terraform waits for the AWS operation and must not be interrupted. These delays are expected and do not justify deleting the distribution outside Terraform.
 

@@ -35,6 +35,12 @@ run "expected_account_configuration" {
     target = [
       terraform_data.expected_aws_account,
       aws_ecr_repository.services,
+      aws_s3_bucket.static_site,
+      aws_s3_bucket_public_access_block.static_site,
+      aws_s3_bucket_ownership_controls.static_site,
+      aws_s3_bucket_server_side_encryption_configuration.static_site,
+      aws_iam_role.github_static_site_publisher,
+      data.aws_iam_policy_document.github_static_site_publisher,
       aws_iam_openid_connect_provider.github_actions,
       data.aws_iam_policy_document.github_ecr_publisher_assume_role,
     ]
@@ -46,8 +52,8 @@ run "expected_account_configuration" {
   }
 
   assert {
-    condition     = length(local.microservices) == 6 && !contains(local.microservices, "sports-store-gateway")
-    error_message = "Production ECR inventory must contain six images and exclude Gateway."
+    condition     = length(local.microservices) == 5 && !contains(local.microservices, "sports-store-gateway") && !contains(local.microservices, "sports-store-frontend")
+    error_message = "Production ECR inventory must contain only the five backend images."
   }
 
   assert {
@@ -67,24 +73,52 @@ run "expected_account_configuration" {
 
   assert {
     condition = toset(local.github_oidc_subjects) == toset([
-      "repo:sports-store-devops-team/sports-store-frontend:ref:refs/heads/main",
       "repo:sports-store-devops-team/sports-store-auth-service:ref:refs/heads/main",
       "repo:sports-store-devops-team/sports-store-catalog-service:ref:refs/heads/main",
       "repo:sports-store-devops-team/sports-store-cart-service:ref:refs/heads/main",
       "repo:sports-store-devops-team/sports-store-order-service:ref:refs/heads/main",
       "repo:sports-store-devops-team/sports-store-payment-service:ref:refs/heads/main",
     ])
-    error_message = "OIDC subjects must be exactly the six approved application repositories on main."
+    error_message = "ECR OIDC subjects must be exactly the five approved backend repositories on main."
   }
 
   assert {
     condition = (
-      length(local.github_oidc_subjects) == 6 &&
+      length(local.github_oidc_subjects) == 5 &&
       alltrue([for subject in local.github_oidc_subjects : endswith(subject, ":ref:refs/heads/main")]) &&
       alltrue([for subject in local.github_oidc_subjects : !strcontains(subject, "*")]) &&
       alltrue([for subject in local.github_oidc_subjects : !strcontains(subject, "sports-store-gateway")])
     )
     error_message = "OIDC trust must not include Gateway, wildcard identities, or non-main refs."
+  }
+
+  assert {
+    condition = (
+      aws_s3_bucket.static_site.bucket == "sports-store-static-123456789012-eu-central-1" &&
+      aws_s3_bucket.static_site.force_destroy &&
+      one(aws_s3_bucket_ownership_controls.static_site.rule).object_ownership == "BucketOwnerEnforced" &&
+      one(one(aws_s3_bucket_server_side_encryption_configuration.static_site.rule).apply_server_side_encryption_by_default).sse_algorithm == "AES256"
+    )
+    error_message = "The static-site bucket must be deterministic, force-destroyable, bucket-owner enforced, and SSE-S3 encrypted."
+  }
+
+  assert {
+    condition = (
+      aws_s3_bucket_public_access_block.static_site.block_public_acls &&
+      aws_s3_bucket_public_access_block.static_site.block_public_policy &&
+      aws_s3_bucket_public_access_block.static_site.ignore_public_acls &&
+      aws_s3_bucket_public_access_block.static_site.restrict_public_buckets
+    )
+    error_message = "All four static-site public access block controls must remain enabled."
+  }
+
+  assert {
+    condition = (
+      local.github_static_site_oidc_subject == "repo:sports-store-devops-team/sports-store-frontend:ref:refs/heads/main" &&
+      toset(local.static_site_bucket_actions) == toset(["s3:GetBucketLocation", "s3:ListBucket"]) &&
+      toset(local.static_site_object_actions) == toset(["s3:PutObject", "s3:DeleteObject"])
+    )
+    error_message = "The frontend publisher must trust only frontend/main and have only exact bucket publication permissions."
   }
 
 }

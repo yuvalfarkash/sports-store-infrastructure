@@ -147,7 +147,8 @@ else
 fi
 
 echo "=== Running Terraform destroy ==="
-echo "Note: ECR repos are force_delete=true - any pushed images will be deleted too."
+echo "Note: ECR repos and the static-site bucket use destructive teardown settings."
+echo "Destroying the base state permanently deletes every published static frontend object."
 terraform -chdir="$TERRAFORM_DIR" destroy
 
 echo "=== Checking for orphaned EBS volumes (MongoDB PVC uses reclaimPolicy: Retain, so its volume survives this destroy) ==="

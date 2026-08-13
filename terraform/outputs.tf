@@ -48,6 +48,26 @@ output "github_actions_ecr_publishing_role_arn" {
   value       = aws_iam_role.github_ecr_publisher.arn
 }
 
+output "static_site_bucket_name" {
+  description = "Private S3 bucket containing the production frontend"
+  value       = aws_s3_bucket.static_site.bucket
+}
+
+output "static_site_bucket_arn" {
+  description = "ARN of the private production frontend bucket"
+  value       = aws_s3_bucket.static_site.arn
+}
+
+output "static_site_bucket_regional_domain_name" {
+  description = "Regional S3 origin hostname used by CloudFront"
+  value       = aws_s3_bucket.static_site.bucket_regional_domain_name
+}
+
+output "github_actions_static_site_publishing_role_arn" {
+  description = "IAM role ARN used by the frontend main-branch workflow to publish static files"
+  value       = aws_iam_role.github_static_site_publisher.arn
+}
+
 output "ebs_csi_iam_role_arn" {
   description = "IRSA IAM role ARN for the EBS CSI controller"
   value       = module.ebs_csi_irsa.arn

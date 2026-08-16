@@ -41,6 +41,21 @@ grep -q '\[local.deployment_principal\]' terraform/eks-iam.tf || fail "deploymen
 grep -q 'aquasecurity/trivy-action@a9c7b0f06e461e9d4b4d1711f154ee024b8d7ab8  # v0.36.0' .github/workflows/ci.yaml ||
   fail "Trivy Action is not pinned to the verified v0.36.0 commit"
 
+grep -q 'eks_managed_node_groups = local.managed_node_groups' terraform/eks.tf ||
+  fail "EKS must use the asserted single managed node-group configuration"
+grep -q 'subnet_ids[[:space:]]*= module.vpc.private_subnets' terraform/eks.tf ||
+  fail "the managed node group must remain in private subnets"
+grep -q 'ENABLE_PREFIX_DELEGATION = "false"' terraform/eks.tf ||
+  fail "VPC CNI prefix delegation must remain disabled"
+if grep -Rqs 'maxPods:' terraform --include='*.tf' --exclude-dir=.terraform; then
+  fail "unsupported custom kubelet maxPods override remains configured"
+fi
+if grep -RqiE 'capacity_type[[:space:]]*=[[:space:]]*"SPOT"|"cluster-autoscaler"|"karpenter"|cluster_autoscaler' terraform \
+  --include='*.tf' --exclude-dir=.terraform; then
+  fail "Spot capacity or an automatic node scaler must not be configured"
+fi
+grep -q 'aws-ebs-csi-driver' terraform/eks.tf || fail "EBS CSI add-on is missing"
+
 oidc_provider_count="$(grep -RhsEc '^resource "aws_iam_openid_connect_provider" ' terraform --include='*.tf' --exclude-dir=.terraform | awk '{ total += $1 } END { print total + 0 }')"
 [[ "$oidc_provider_count" -eq 1 ]] || fail "exactly one managed GitHub OIDC provider must be declared"
 if grep -Rqs '^data "aws_iam_openid_connect_provider" ' terraform --include='*.tf' --exclude-dir=.terraform; then

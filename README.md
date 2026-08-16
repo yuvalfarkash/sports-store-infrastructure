@@ -50,8 +50,8 @@ Terraform in `terraform/` defines the AWS foundation: networking, EKS, add-ons, 
 - An EKS 1.34 cluster with a public API endpoint
 - EKS `api`, `audit`, and `authenticator` control-plane logs retained in
   CloudWatch Logs for seven days
-- One managed node group using `AL2023_x86_64_STANDARD` and `t3.micro`, sized
-  for the course budget rather than headroom
+- One managed node group using `AL2023_x86_64_STANDARD` and three On-Demand
+  `t3.medium` nodes by default, with minimum 2 and maximum 4
 - Argo CD, External Secrets Operator chart `2.8.0`, the AWS Load Balancer Controller, and Argo CD Image Updater are
   configured with reduced resource usage in `helm.tf`
 - EKS-managed CoreDNS, kube-proxy, VPC CNI, and EBS CSI add-ons
@@ -79,6 +79,102 @@ Alloy 1.11.0 (wave 2), and the Sports Store workload (wave 3). Loki and Alloy
 read their values from `sports-store-deployments/main`; no Application targets
 the development branch. Workload logs stay internal to the cluster and use
 small, ephemeral storage as documented in that repository.
+
+## EKS node capacity and failure limits
+
+The AWS workload was rendered and audited against the pinned chart versions on
+2026-08-16. It includes the five FastAPI services, MongoDB, External Secrets
+Operator, AWS Load Balancer Controller, Argo CD, Argo CD Image Updater,
+metrics-server, Prometheus, Grafana, Alertmanager, kube-state-metrics,
+node-exporter, Prometheus Operator, Loki, Alloy, and the EKS system add-ons. The
+AWS frontend Deployment, Service, metrics sidecar, ServiceMonitor, and `/`
+Ingress route are disabled because CloudFront serves the frontend from private
+S3. Local rendering still includes the frontend.
+
+Scheduler-effective resource totals use Pod requests, including the
+Prometheus config-reloader sidecars. Containers that intentionally omit a
+request or limit contribute zero for that field. Current `most_recent` EKS
+add-on versions were resolved for Kubernetes 1.34 when the audit was performed;
+because those add-ons are not pinned, repeat the audit before a later apply if
+AWS changes their defaults.
+
+| Workload group | Pods with 3 nodes | CPU requests | Memory requests | CPU limits | Memory limits |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Five FastAPI services | 5 | 100m | 320Mi | 750m | 640Mi |
+| MongoDB | 1 | 50m | 128Mi | 300m | 384Mi |
+| Platform controllers (External Secrets, load balancer, Argo CD, Image Updater, metrics-server) | 11 | 270m | 648Mi | 0m | 1,376Mi |
+| Prometheus, Grafana, Alertmanager, kube-state-metrics, node-exporter, Prometheus Operator, Loki, Alloy | 10 | 430m | 1,104Mi | 1,675m | 2,528Mi |
+| EKS system Pods and add-ons | 13 | 840m | 836Mi | 0m | 3,412Mi |
+| **Total** | **40** | **1,690m** | **3,036Mi** | **2,725m** | **8,340Mi** |
+
+Four DaemonSets run on each Linux node: VPC CNI, kube-proxy, EBS CSI node,
+and node-exporter. Their per-node scheduling overhead is 4 Pods, 195m CPU, and
+136Mi memory; their declared limits total 100m CPU and 384Mi memory. The other
+28 Pods are fixed-count workloads, including two CoreDNS and two EBS CSI
+controller Pods.
+
+A `t3.medium` has 2 vCPU and 4GiB memory. The EKS-optimized AL2023 bootstrap
+reserves 70m CPU and, at 17 Pods, 442Mi memory (`255Mi + 11Mi * maxPods`);
+kubelet also keeps a 100Mi hard memory-eviction threshold. Using advertised
+instance capacity gives an estimated per-node allocatable 1,930m CPU and
+3,554Mi memory, or 5,790m and 10,662Mi across three nodes. Actual reported
+memory can be slightly lower because the operating system and kernel reduce
+the capacity visible to kubelet. Against the estimate, steady-state request
+headroom is about 4,100m CPU and 7,626Mi memory.
+
+VPC CNI prefix delegation remains disabled. A `t3.medium` supports 3 ENIs with
+6 IPv4 addresses each, so the supported ENI-based kubelet limit is
+`3 * (6 - 1) + 2 = 17` Pods. The removed `maxPods: 110` override could not
+create the missing VPC IP capacity. Three nodes therefore provide 51 Pod slots:
+40 are expected in steady state and 11 remain for a sequential rolling surge,
+the transient Argo CD Redis initialization Job, and similar short-lived work.
+More than 11 simultaneous surge Pods can remain Pending.
+
+The configuration is not N-1 schedulable by Pod count. After one node is lost,
+28 fixed Pods plus 8 DaemonSet Pods require 36 slots, while two nodes provide
+only 34. CPU and memory requests would still fit (about 1,495m and 2,900Mi
+against an estimated 3,860m and 7,108Mi), but at least two Pods can remain
+Pending. This is a deliberate limitation of the requested small course
+configuration, not high-availability capacity.
+
+### Scaling semantics
+
+`desired_size = 3` means three nodes normally run. `min_size = 2` and
+`max_size = 4` are permitted managed-node-group boundaries; they do not enable
+automatic scaling. No Cluster Autoscaler or Karpenter component is installed,
+so Kubernetes cannot add a node when Pods are Pending. Scaling must be done
+through a reviewed Terraform change or directly through EKS/Auto Scaling;
+direct manual scaling makes the live desired count differ from configuration
+(the EKS module intentionally ignores subsequent desired-size drift).
+
+### MongoDB Availability Zone constraint
+
+The node group remains attached to both private subnets across the existing two
+Availability Zones. The `ebs-sc` StorageClass still uses the EBS CSI Driver,
+`WaitForFirstConsumer`, `Retain`, and the existing EBS-backed MongoDB PVC. Once
+provisioned, that EBS volume belongs to one Availability Zone. Kubernetes can
+schedule MongoDB only onto a node in that same zone. Three nodes spread across
+two zones do not guarantee that every zone has capacity at every moment; if no
+node is available in the volume's zone, MongoDB can remain `Pending`. MongoDB
+has one standalone replica and is not highly available.
+
+### Expected effect of a future Terraform apply
+
+No apply was run for this change. With the locked AWS provider, changing
+`aws_eks_node_group.instance_types` is a replacement operation. The EKS module
+uses name prefixes and `create_before_destroy`, so a reviewed apply is expected
+to create a new managed node group with three `t3.medium` nodes before deleting
+the old twelve-node group. End state remains one node group, but both groups can
+coexist during replacement, temporarily reaching as many as 15 nodes plus any
+EKS update surge. Quotas, subnet IP availability, and temporary cost must be
+reviewed in the real plan.
+
+When the old group is deleted, EKS drains its nodes and evicts reschedulable
+Pods onto the new group. PodDisruptionBudgets and termination grace periods can
+slow this process. MongoDB can restart only after an eligible new node exists
+in its EBS volume's zone and the volume detaches and reattaches. Because several
+components are single-replica, the cluster is not N-1 schedulable by Pod count,
+and MongoDB is zonal, downtime is possible; zero downtime is not promised.
 
 ## Required tools
 
@@ -241,7 +337,7 @@ Confirm persistent-data and backup requirements, ensure both Terraform states ar
 To add another EKS administrator later, supply an explicit same-account IAM user
 or role ARN through `additional_eks_principal_arns` in an approved, uncommitted
 Terraform variable file. Validation rejects account root, wildcards, and other
-accounts. EKS node-sizing changes remain a separate future task.
+accounts.
 
 CloudFront is never created or deleted with AWS CLI. The separate CloudFront state is intentionally destroyed before Kubernetes or ALB changes, works when the distribution or ALB is already absent, and keeps normal create/destroy operations idempotent. Do not discard either Terraform state before completing this sequence.
 
@@ -272,4 +368,4 @@ An absent CloudFront output means stage 2 has not successfully completed in the 
 
 EKS, the NAT Gateway, EC2 managed-node instances, EBS volumes, load balancers, CloudFront requests, CloudFront data transfer, and origin data transfer can incur charges. `PriceClass_100` limits edge locations to the lowest-cost CloudFront price class for this course environment, but it does not make requests or transfer free. A shared NAT Gateway reduces course-environment cost but is not highly available across availability zones. Monitor usage and destroy resources when they are no longer required.
 
-At the configured desired capacity, expect one chargeable EKS control plane, one NAT Gateway, up to six `t3.micro` EC2 nodes and their root EBS volumes, ECR image storage, application EBS volumes such as the MongoDB PVC, one ALB, and one CloudFront distribution. Actual counts and charges can change through traffic, autoscaling, upgrades, retained volumes, and workload configuration.
+At the configured desired capacity, expect one chargeable EKS control plane, one NAT Gateway, three `t3.medium` On-Demand EC2 nodes and their root EBS volumes (with configured boundaries of two to four), ECR image storage, application EBS volumes such as the MongoDB PVC, one ALB, and one CloudFront distribution. No automatic node scaler is installed. Actual counts and charges can change through manual scaling, upgrades, replacement overlap, retained volumes, and workload configuration.

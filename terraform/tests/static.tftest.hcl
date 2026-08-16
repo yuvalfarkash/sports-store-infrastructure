@@ -16,6 +16,11 @@ mock_provider "aws" {
       json = "{\"Version\":\"2012-10-17\",\"Statement\":[]}"
     }
   }
+  mock_data "aws_iam_session_context" {
+    defaults = {
+      issuer_arn = "arn:aws:iam::123456789012:user/deploy-user"
+    }
+  }
   mock_data "aws_partition" {
     defaults = {
       partition  = "aws"
@@ -121,6 +126,32 @@ run "expected_account_configuration" {
     error_message = "The frontend publisher must trust only frontend/main and have only exact bucket publication permissions."
   }
 
+}
+
+run "managed_node_group_configuration" {
+  command = plan
+
+  plan_options {
+    target = [module.eks]
+  }
+
+  assert {
+    condition = (
+      length(local.managed_node_groups) == 1 &&
+      toset(keys(local.managed_node_groups)) == toset(["default"]) &&
+      local.managed_node_groups.default.instance_types == ["t3.medium"] &&
+      local.managed_node_groups.default.capacity_type == "ON_DEMAND" &&
+      local.managed_node_groups.default.min_size == 2 &&
+      local.managed_node_groups.default.desired_size == 3 &&
+      local.managed_node_groups.default.max_size == 4
+    )
+    error_message = "The single managed node group must use three desired On-Demand t3.medium nodes within the 2-4 boundaries."
+  }
+
+  assert {
+    condition     = local.vpc_cni_configuration.env.ENABLE_PREFIX_DELEGATION == "false"
+    error_message = "VPC CNI prefix delegation must remain disabled."
+  }
 }
 
 run "wrong_account_rejected" {

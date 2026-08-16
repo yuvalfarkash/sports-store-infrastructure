@@ -1,3 +1,25 @@
+locals {
+  vpc_cni_configuration = {
+    env = {
+      ENABLE_PREFIX_DELEGATION = "false"
+    }
+  }
+
+  managed_node_groups = {
+    default = {
+      ami_type       = "AL2023_x86_64_STANDARD"
+      instance_types = ["t3.medium"]
+      capacity_type  = "ON_DEMAND"
+
+      # These are static managed-node-group boundaries. No Cluster Autoscaler
+      # or Karpenter component is installed by this configuration.
+      min_size     = 2
+      desired_size = 3
+      max_size     = 4
+    }
+  }
+}
+
 module "eks" {
   source  = "terraform-aws-modules/eks/aws"
   version = "~> 21.0"
@@ -27,13 +49,9 @@ module "eks" {
       most_recent = true
     }
     vpc-cni = {
-      most_recent    = true
-      before_compute = true
-      configuration_values = jsonencode({
-        env = {
-          ENABLE_PREFIX_DELEGATION = "false"
-        }
-      })
+      most_recent          = true
+      before_compute       = true
+      configuration_values = jsonencode(local.vpc_cni_configuration)
     }
     aws-ebs-csi-driver = {
       most_recent              = true
@@ -41,31 +59,10 @@ module "eks" {
     }
   }
 
-  eks_managed_node_groups = {
-    default = {
-      ami_type       = "AL2023_x86_64_STANDARD"
-      instance_types = ["t3.micro"]
-
-      cloudinit_pre_nodeadm = [
-        {
-          content_type = "application/node.eks.aws"
-          content      = <<-EOT
-            ---
-            apiVersion: node.eks.aws/v1alpha1
-            kind: NodeConfig
-            spec:
-              kubelet:
-                config:
-                  maxPods: 110
-          EOT
-        }
-      ]
-
-      min_size     = 1
-      max_size     = 12
-      desired_size = 12
-    }
-  }
+  # The EKS-optimized AMI derives the supported t3.medium Pod limit from its
+  # ENI/IP capacity. Prefix delegation remains disabled, so do not override
+  # kubelet maxPods with a value that the VPC CNI cannot support.
+  eks_managed_node_groups = local.managed_node_groups
 
   enable_cluster_creator_admin_permissions = true
 

@@ -35,8 +35,8 @@ resource "helm_release" "aws_load_balancer_controller" {
     value = var.aws_region
   }
 
-  # A single controller replica is enough for this cluster and halves its
-  # footprint on the t3.micro node group (chart default is 2, for HA).
+  # A single controller replica is enough for this course cluster and halves
+  # the chart default footprint. This controller is not highly available.
   set {
     name  = "replicaCount"
     value = "1"
@@ -98,11 +98,10 @@ resource "helm_release" "argocd" {
   version          = "7.4.4"
 
   # This cluster has one static Application (see automation.tf) with no SSO,
-  # so Dex and notifications are disabled - both unused pods that only eat
-  # into the t3.micro node group's tight allocatable memory. The chart (7.4.4)
+  # so Dex and notifications are disabled - both would be unused pods. The chart (7.4.4)
   # has no equivalent toggle for the ApplicationSet controller - its Deployment
   # template is unconditional - so that pod stays; it's small on its own.
-  # Requests/limits below are sized for the t3.micro constraint.
+  # Requests/limits below are included in the t3.medium capacity audit.
   values = [
     yamlencode({
       dex           = { enabled = false }

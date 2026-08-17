@@ -34,6 +34,8 @@ readonly -a BACKEND_REPOSITORIES=(
 ARGO_APPLICATION_TIMEOUT_SECONDS="${ARGO_APPLICATION_TIMEOUT_SECONDS:-300}"
 ALB_HOSTNAME_TIMEOUT_SECONDS="${ALB_HOSTNAME_TIMEOUT_SECONDS:-1200}"
 KUBERNETES_POLL_SECONDS="${KUBERNETES_POLL_SECONDS:-10}"
+WORKFLOW_DISCOVERY_TIMEOUT_SECONDS="${WORKFLOW_DISCOVERY_TIMEOUT_SECONDS:-120}"
+GITHUB_ACTIONS_POLL_SECONDS="${GITHUB_ACTIONS_POLL_SECONDS:-5}"
 
 validate_wait_configuration() {
   local setting_name
@@ -41,13 +43,107 @@ validate_wait_configuration() {
   for setting_name in \
     ARGO_APPLICATION_TIMEOUT_SECONDS \
     ALB_HOSTNAME_TIMEOUT_SECONDS \
-    KUBERNETES_POLL_SECONDS; do
+    KUBERNETES_POLL_SECONDS \
+    WORKFLOW_DISCOVERY_TIMEOUT_SECONDS \
+    GITHUB_ACTIONS_POLL_SECONDS; do
     if ! is_positive_integer "${!setting_name}"; then
       printf 'ERROR: %s must be a positive integer, got %q.\n' \
         "$setting_name" "${!setting_name}" >&2
       return 1
     fi
   done
+}
+
+get_remote_main_sha() {
+  local repository="$1"
+  local main_sha
+
+  main_sha="$(gh api "repos/$GITHUB_ORGANIZATION/$repository/git/ref/heads/main" \
+    --jq '.object.sha')"
+  if [[ ! "$main_sha" =~ ^[0-9a-f]{40}$ ]]; then
+    printf 'ERROR: remote main for %s did not resolve to a full lowercase commit SHA.\n' \
+      "$repository" >&2
+    return 1
+  fi
+  printf '%s\n' "$main_sha"
+}
+
+generate_deployment_id() {
+  local repository="$1"
+  local repository_slug="${repository#sports-store-}"
+  local deployment_id
+
+  deployment_id="deploy-$(date -u +%Y%m%dT%H%M%S%NZ)-${repository_slug}-$$"
+  if [[ ! "$deployment_id" =~ ^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$ ]]; then
+    echo 'ERROR: generated deployment identifier is invalid.' >&2
+    return 1
+  fi
+  printf '%s\n' "$deployment_id"
+}
+
+find_dispatched_run() {
+  local repository="$1"
+  local expected_sha="$2"
+  local deployment_id="$3"
+  local baseline_run_id="$4"
+  local expected_title="Deploy $deployment_id"
+  local deadline=$((SECONDS + WORKFLOW_DISCOVERY_TIMEOUT_SECONDS))
+  local runs run_id display_title event head_branch head_sha
+  local candidate_event candidate_head_branch candidate_head_sha
+  local -a candidate_run_ids
+
+  if [[ ! "$expected_sha" =~ ^[0-9a-f]{40}$ ]] ||
+    [[ ! "$deployment_id" =~ ^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$ ]] ||
+    [[ ! "$baseline_run_id" =~ ^[0-9]+$ ]] ||
+    ! is_positive_integer "$WORKFLOW_DISCOVERY_TIMEOUT_SECONDS" ||
+    ! is_positive_integer "$GITHUB_ACTIONS_POLL_SECONDS"; then
+    echo 'ERROR: invalid workflow correlation parameters.' >&2
+    return 1
+  fi
+
+  while ((SECONDS < deadline)); do
+    runs="$(gh run list -R "$GITHUB_ORGANIZATION/$repository" \
+      --workflow ci.yaml --limit 100 \
+      --json databaseId,displayTitle,event,headBranch,headSha \
+      --jq '.[] | [.databaseId, .displayTitle, .event, .headBranch, .headSha] | @tsv')"
+    candidate_run_ids=()
+    candidate_event=''
+    candidate_head_branch=''
+    candidate_head_sha=''
+    while IFS=$'\t' read -r run_id display_title event head_branch head_sha; do
+      [[ -n "$run_id" ]] || continue
+      if [[ "$run_id" =~ ^[0-9]+$ ]] &&
+        ((run_id > baseline_run_id)) &&
+        [[ "$display_title" == "$expected_title" ]]; then
+        candidate_run_ids+=("$run_id")
+        candidate_event="$event"
+        candidate_head_branch="$head_branch"
+        candidate_head_sha="$head_sha"
+      fi
+    done <<<"$runs"
+
+    if ((${#candidate_run_ids[@]} > 1)); then
+      printf 'ERROR: multiple workflow runs matched deployment %s in %s.\n' \
+        "$deployment_id" "$repository" >&2
+      return 1
+    fi
+    if ((${#candidate_run_ids[@]} == 1)); then
+      if [[ "$candidate_event" != 'workflow_dispatch' ]] ||
+        [[ "$candidate_head_branch" != 'main' ]] ||
+        [[ "$candidate_head_sha" != "$expected_sha" ]]; then
+        printf 'ERROR: correlated workflow run metadata is unsafe for deployment %s in %s.\n' \
+          "$deployment_id" "$repository" >&2
+        return 1
+      fi
+      printf '%s\n' "${candidate_run_ids[0]}"
+      return 0
+    fi
+    sleep "$GITHUB_ACTIONS_POLL_SECONDS"
+  done
+
+  printf 'ERROR: timed out correlating deployment %s in %s.\n' \
+    "$deployment_id" "$repository" >&2
+  return 1
 }
 
 configure_backend_github_actions_variables() {
@@ -85,19 +181,35 @@ configure_frontend_github_actions_variables() {
 }
 
 trigger_application_workflows() {
-  local repository run_id
+  local repository expected_sha confirmed_sha deployment_id baseline_run_id run_id
 
   echo "=== Triggering and waiting for main-branch application workflows ==="
   for repository in "${APPLICATION_REPOSITORIES[@]}"; do
-    echo "Rerunning the latest main push CI for $repository"
-    run_id="$(gh run list -R "$GITHUB_ORGANIZATION/$repository" --workflow ci.yaml \
-      --branch main --event push --limit 1 --json databaseId --jq '.[0].databaseId')"
-    [[ -n "$run_id" ]] || {
-      printf 'ERROR: no main push workflow exists for %s; refusing to bypass its publish gate.\n' \
+    echo "Dispatching the exact current main revision for $repository"
+    expected_sha="$(get_remote_main_sha "$repository")"
+    deployment_id="$(generate_deployment_id "$repository")"
+    baseline_run_id="$(gh run list -R "$GITHUB_ORGANIZATION/$repository" \
+      --workflow ci.yaml --limit 100 --json databaseId \
+      --jq 'map(.databaseId) | max // 0')"
+    [[ "$baseline_run_id" =~ ^[0-9]+$ ]] || {
+      printf 'ERROR: could not establish the workflow run baseline for %s.\n' \
         "$repository" >&2
       return 1
     }
-    gh run rerun "$run_id" -R "$GITHUB_ORGANIZATION/$repository"
+
+    confirmed_sha="$(get_remote_main_sha "$repository")"
+    if [[ "$confirmed_sha" != "$expected_sha" ]]; then
+      printf 'ERROR: remote main changed before dispatch for %s; refusing to continue.\n' \
+        "$repository" >&2
+      return 1
+    fi
+
+    gh workflow run ci.yaml -R "$GITHUB_ORGANIZATION/$repository" \
+      --ref main \
+      -f "expected_sha=$expected_sha" \
+      -f "deployment_id=$deployment_id"
+    run_id="$(find_dispatched_run \
+      "$repository" "$expected_sha" "$deployment_id" "$baseline_run_id")"
     gh run watch "$run_id" -R "$GITHUB_ORGANIZATION/$repository" --exit-status
   done
 }

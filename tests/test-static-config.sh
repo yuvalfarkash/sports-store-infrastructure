@@ -104,9 +104,14 @@ oidc_trust="$(sed -n '1,/^resource "aws_iam_role" "github_ecr_publisher"/p' terr
 if grep -q 'StringLike' <<<"$oidc_trust" || grep -q '@\*' <<<"$oidc_trust" || grep -q '"\*"' <<<"$oidc_trust"; then
   fail "OIDC trust contains wildcard subject matching"
 fi
-grep -q -- '--event push' deploy.sh || fail "deploy does not preserve the main-push publication gate"
-if grep -q 'gh workflow run' deploy.sh; then
-  fail "deploy uses workflow_dispatch, which cannot publish application images"
+grep -q 'gh workflow run ci.yaml' deploy.sh || fail "deploy does not dispatch ci.yaml explicitly"
+grep -q -- '--ref main' deploy.sh || fail "deploy does not pin workflow dispatches to main"
+grep -q -- 'expected_sha=' deploy.sh || fail "deploy does not send the expected main SHA"
+grep -q -- 'deployment_id=' deploy.sh || fail "deploy does not send a correlation identifier"
+grep -q 'git/ref/heads/main' deploy.sh || fail "deploy does not query the exact remote main ref"
+grep -q 'workflow_dispatch' deploy.sh || fail "deploy does not correlate manual workflow runs"
+if grep -q 'gh run rerun' deploy.sh; then
+  fail "deploy can still rerun a historical workflow"
 fi
 
 old_account_id="324621""154117"

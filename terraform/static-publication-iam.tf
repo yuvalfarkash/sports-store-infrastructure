@@ -1,5 +1,5 @@
 locals {
-  github_static_site_oidc_subject = "repo:sports-store-devops-team/sports-store-frontend:ref:refs/heads/main"
+  github_static_site_oidc_subject = "repo:${var.github_organization}@${var.github_organization_id}/sports-store-frontend@${lookup(var.github_repository_ids, "sports-store-frontend", 0)}:ref:refs/heads/main"
   static_site_bucket_actions      = ["s3:GetBucketLocation", "s3:ListBucket"]
   static_site_object_actions      = ["s3:PutObject", "s3:DeleteObject"]
 }

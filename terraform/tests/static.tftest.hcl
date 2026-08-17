@@ -45,7 +45,9 @@ run "expected_account_configuration" {
       aws_s3_bucket_ownership_controls.static_site,
       aws_s3_bucket_server_side_encryption_configuration.static_site,
       aws_iam_role.github_static_site_publisher,
+      aws_iam_role.github_ecr_publisher,
       data.aws_iam_policy_document.github_static_site_publisher,
+      data.aws_iam_policy_document.github_static_site_publisher_assume_role,
       aws_iam_openid_connect_provider.github_actions,
       data.aws_iam_policy_document.github_ecr_publisher_assume_role,
     ]
@@ -72,17 +74,28 @@ run "expected_account_configuration" {
   }
 
   assert {
-    condition     = var.github_organization == "sports-store-devops-team"
-    error_message = "GitHub publishing trust must remain restricted to the Sports Store organization."
+    condition = (
+      var.github_organization == "sports-store-devops-team" &&
+      var.github_organization_id == 311871744 &&
+      var.github_repository_ids == tomap({
+        sports-store-frontend        = 1319569364
+        sports-store-auth-service    = 1319569433
+        sports-store-catalog-service = 1319569475
+        sports-store-cart-service    = 1319569543
+        sports-store-order-service   = 1319569596
+        sports-store-payment-service = 1319569661
+      })
+    )
+    error_message = "GitHub publishing trust must use the exact reviewed organization and repository identities."
   }
 
   assert {
     condition = toset(local.github_oidc_subjects) == toset([
-      "repo:sports-store-devops-team/sports-store-auth-service:ref:refs/heads/main",
-      "repo:sports-store-devops-team/sports-store-catalog-service:ref:refs/heads/main",
-      "repo:sports-store-devops-team/sports-store-cart-service:ref:refs/heads/main",
-      "repo:sports-store-devops-team/sports-store-order-service:ref:refs/heads/main",
-      "repo:sports-store-devops-team/sports-store-payment-service:ref:refs/heads/main",
+      "repo:sports-store-devops-team@311871744/sports-store-auth-service@1319569433:ref:refs/heads/main",
+      "repo:sports-store-devops-team@311871744/sports-store-catalog-service@1319569475:ref:refs/heads/main",
+      "repo:sports-store-devops-team@311871744/sports-store-cart-service@1319569543:ref:refs/heads/main",
+      "repo:sports-store-devops-team@311871744/sports-store-order-service@1319569596:ref:refs/heads/main",
+      "repo:sports-store-devops-team@311871744/sports-store-payment-service@1319569661:ref:refs/heads/main",
     ])
     error_message = "ECR OIDC subjects must be exactly the five approved backend repositories on main."
   }
@@ -91,8 +104,10 @@ run "expected_account_configuration" {
     condition = (
       length(local.github_oidc_subjects) == 5 &&
       alltrue([for subject in local.github_oidc_subjects : endswith(subject, ":ref:refs/heads/main")]) &&
+      alltrue([for subject in local.github_oidc_subjects : can(regex("^repo:sports-store-devops-team@311871744/sports-store-[a-z-]+@[1-9][0-9]*:ref:refs/heads/main$", subject))]) &&
       alltrue([for subject in local.github_oidc_subjects : !strcontains(subject, "*")]) &&
-      alltrue([for subject in local.github_oidc_subjects : !strcontains(subject, "sports-store-gateway")])
+      alltrue([for subject in local.github_oidc_subjects : !strcontains(subject, "sports-store-gateway")]) &&
+      alltrue([for subject in local.github_oidc_subjects : !strcontains(subject, "repo:sports-store-devops-team/")])
     )
     error_message = "OIDC trust must not include Gateway, wildcard identities, or non-main refs."
   }
@@ -119,13 +134,116 @@ run "expected_account_configuration" {
 
   assert {
     condition = (
-      local.github_static_site_oidc_subject == "repo:sports-store-devops-team/sports-store-frontend:ref:refs/heads/main" &&
+      local.github_static_site_oidc_subject == "repo:sports-store-devops-team@311871744/sports-store-frontend@1319569364:ref:refs/heads/main" &&
       toset(local.static_site_bucket_actions) == toset(["s3:GetBucketLocation", "s3:ListBucket"]) &&
       toset(local.static_site_object_actions) == toset(["s3:PutObject", "s3:DeleteObject"])
     )
     error_message = "The frontend publisher must trust only frontend/main and have only exact bucket publication permissions."
   }
 
+  assert {
+    condition = (
+      aws_iam_role.github_ecr_publisher.name == "sports-store-github-ecr-publisher" &&
+      aws_iam_role.github_static_site_publisher.name == "sports-store-github-static-site-publisher"
+    )
+    error_message = "Existing publisher role identities and managed assume-role policy wiring must remain unchanged."
+  }
+
+}
+
+run "wrong_github_organization_id_is_rejected" {
+  command = plan
+
+  variables {
+    github_organization_id = 311871745
+  }
+
+  expect_failures = [var.github_organization_id]
+}
+
+run "missing_github_repository_id_is_rejected" {
+  command = plan
+
+  variables {
+    github_repository_ids = {
+      sports-store-frontend        = 1319569364
+      sports-store-auth-service    = 1319569433
+      sports-store-catalog-service = 1319569475
+      sports-store-cart-service    = 1319569543
+      sports-store-order-service   = 1319569596
+    }
+  }
+
+  expect_failures = [var.github_repository_ids]
+}
+
+run "extra_github_repository_id_is_rejected" {
+  command = plan
+
+  variables {
+    github_repository_ids = {
+      sports-store-frontend        = 1319569364
+      sports-store-auth-service    = 1319569433
+      sports-store-catalog-service = 1319569475
+      sports-store-cart-service    = 1319569543
+      sports-store-order-service   = 1319569596
+      sports-store-payment-service = 1319569661
+      sports-store-gateway         = 1319569700
+    }
+  }
+
+  expect_failures = [var.github_repository_ids]
+}
+
+run "duplicate_github_repository_id_is_rejected" {
+  command = plan
+
+  variables {
+    github_repository_ids = {
+      sports-store-frontend        = 1319569364
+      sports-store-auth-service    = 1319569433
+      sports-store-catalog-service = 1319569475
+      sports-store-cart-service    = 1319569543
+      sports-store-order-service   = 1319569596
+      sports-store-payment-service = 1319569596
+    }
+  }
+
+  expect_failures = [var.github_repository_ids]
+}
+
+run "zero_github_repository_id_is_rejected" {
+  command = plan
+
+  variables {
+    github_repository_ids = {
+      sports-store-frontend        = 1319569364
+      sports-store-auth-service    = 0
+      sports-store-catalog-service = 1319569475
+      sports-store-cart-service    = 1319569543
+      sports-store-order-service   = 1319569596
+      sports-store-payment-service = 1319569661
+    }
+  }
+
+  expect_failures = [var.github_repository_ids]
+}
+
+run "negative_github_repository_id_is_rejected" {
+  command = plan
+
+  variables {
+    github_repository_ids = {
+      sports-store-frontend        = 1319569364
+      sports-store-auth-service    = -1319569433
+      sports-store-catalog-service = 1319569475
+      sports-store-cart-service    = 1319569543
+      sports-store-order-service   = 1319569596
+      sports-store-payment-service = 1319569661
+    }
+  }
+
+  expect_failures = [var.github_repository_ids]
 }
 
 run "managed_node_group_configuration" {

@@ -6,9 +6,17 @@ resource "aws_iam_openid_connect_provider" "github_actions" {
 }
 
 locals {
+  github_backend_repositories = [
+    "sports-store-auth-service",
+    "sports-store-catalog-service",
+    "sports-store-cart-service",
+    "sports-store-order-service",
+    "sports-store-payment-service",
+  ]
+
   github_oidc_subjects = [
-    for repository in var.github_repositories :
-    "repo:${var.github_organization}/${repository}:ref:refs/heads/main"
+    for repository in local.github_backend_repositories :
+    "repo:${var.github_organization}@${var.github_organization_id}/${repository}@${lookup(var.github_repository_ids, repository, 0)}:ref:refs/heads/main"
   ]
 }
 

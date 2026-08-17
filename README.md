@@ -20,14 +20,37 @@ reads back these non-secret variables before dispatching `ci.yaml` on `main`
 for the exact remote `main` revision. It never configures the local-only
 Gateway.
 
+GitHub repositories created after July 15, 2026 use immutable default OIDC
+subject claims. For these repositories, IAM trust uses the exact form
+`repo:ORGANIZATION_LOGIN@ORGANIZATION_ID/REPOSITORY_NAME@REPOSITORY_ID:ref:refs/heads/main`.
+The Sports Store organization ID and the six approved repository IDs are stored
+in Terraform as non-secret security identifiers. Repository names alone are no
+longer sufficient because the token subject includes both the human-readable
+name and immutable numeric identity. This prevents a newly created repository
+that reuses an old name from inheriting publication access.
+
+Verify the identifiers through read-only GitHub API calls before reviewing a
+trust change:
+
+```bash
+gh api /orgs/sports-store-devops-team --jq '{login, id}'
+gh api /repos/sports-store-devops-team/REPOSITORY --jq '{name, id, owner: .owner.login, owner_id: .owner.id, created_at, archived}'
+```
+
+Renaming the organization or a repository does not change its immutable numeric
+identity, although the reviewed subject string must reflect the current login
+and name. Adding or replacing a repository always requires an explicit reviewed
+Terraform trust-policy update; there is no organization-wide or repository-wide
+wildcard fallback.
+
 Sports Store workflows pin Trivy Action `v0.36.0` to the verified immutable
 commit `a9c7b0f06e461e9d4b4d1711f154ee024b8d7ab8`, following Aqua's
 [official supply-chain advisory](https://github.com/aquasecurity/trivy/security/advisories/GHSA-69fq-xp46-6x23).
 Review GitHub workflow logs from March 19-20, 2026 and rotate potentially
 exposed credentials if evidence shows an affected mutable tag ran then.
 
-the operator's account currently has no GitHub Actions OIDC provider. The base Terraform
-state owns and creates the single provider for
+The partially deployed base Terraform state owns the single GitHub Actions OIDC
+provider in the operator's account for
 `https://token.actions.githubusercontent.com`, with `sts.amazonaws.com` as its
 only client ID, before creating the ECR publishing role that references its ARN.
 The provider configuration intentionally omits TLS thumbprints: the pinned AWS
@@ -279,6 +302,15 @@ from the same repository directory. Terraform resumes from the resources
 recorded in the local state. Do not delete or recreate the state as a recovery
 step. A corrective code-only change does not itself deploy or repair live
 resources.
+
+The August 2026 frontend workflow failed while requesting
+`sts:AssumeRoleWithWebIdentity`, before it received AWS credentials, so it did
+not upload any object to S3. After the immutable trust-policy correction reaches
+`main`, run `bash deploy.sh` again. The script creates a new revision-safe
+workflow dispatch for the exact current `main` SHA; do not rerun the historical
+failed workflow run. The resumed deployment first updates the two existing IAM
+role trust policies in place, then continues its normal publication, secret
+bootstrap, ALB discovery, and CloudFront stages.
 
 Because AWS no longer runs a frontend Kubernetes workload, the base configuration removes the now-unused `sports-store-frontend` ECR repository and its shared ECR publication permission. A future reviewed base apply will delete that repository and any images it contains (`force_delete = true`); no live deletion was performed while implementing this change.
 

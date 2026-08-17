@@ -111,18 +111,29 @@ grep -q 'identifiers = \[aws_iam_openid_connect_provider.github_actions.arn\]' t
   fail "publisher role trust does not reference the managed OIDC provider ARN"
 grep -A 3 'variable = "token.actions.githubusercontent.com:aud"' terraform/iam-oidc.tf |
   grep -q 'values[[:space:]]*= \["sts.amazonaws.com"\]' || fail "OIDC audience condition is not restricted to AWS STS"
-grep -q 'repo:${var.github_organization}/${repository}:ref:refs/heads/main' terraform/iam-oidc.tf || fail "OIDC main-branch subject is missing"
+grep -q 'repo:${var.github_organization}@${var.github_organization_id}/${repository}@${lookup(var.github_repository_ids, repository, 0)}:ref:refs/heads/main' terraform/iam-oidc.tf ||
+  fail "immutable backend OIDC main-branch subject is missing"
 grep -Eq 'default[[:space:]]*= "sports-store-devops-team"' terraform/variables.tf || fail "OIDC organization trust changed"
-for repository in \
-  sports-store-auth-service \
-  sports-store-catalog-service \
-  sports-store-cart-service \
-  sports-store-order-service \
-  sports-store-payment-service; do
-  grep -q "\"$repository\"" terraform/variables.tf || fail "approved OIDC repository is missing: $repository"
+grep -Eq 'default[[:space:]]*= 311871744' terraform/variables.tf || fail "immutable GitHub organization ID changed"
+for repository_identity in \
+  'sports-store-frontend[[:space:]]*=[[:space:]]*1319569364' \
+  'sports-store-auth-service[[:space:]]*=[[:space:]]*1319569433' \
+  'sports-store-catalog-service[[:space:]]*=[[:space:]]*1319569475' \
+  'sports-store-cart-service[[:space:]]*=[[:space:]]*1319569543' \
+  'sports-store-order-service[[:space:]]*=[[:space:]]*1319569596' \
+  'sports-store-payment-service[[:space:]]*=[[:space:]]*1319569661'; do
+  grep -Eq "$repository_identity" terraform/variables.tf || fail "approved immutable OIDC repository identity is missing: $repository_identity"
 done
-grep -q 'repo:sports-store-devops-team/sports-store-frontend:ref:refs/heads/main' terraform/static-publication-iam.tf ||
-  fail "frontend static publication trust is not restricted to main"
+grep -q 'repo:${var.github_organization}@${var.github_organization_id}/sports-store-frontend@${lookup(var.github_repository_ids, "sports-store-frontend", 0)}:ref:refs/heads/main' terraform/static-publication-iam.tf ||
+  fail "immutable frontend static publication trust is not restricted to main"
+grep -q 'length(distinct(values(var.github_repository_ids))) == length(var.github_repository_ids)' terraform/variables.tf ||
+  fail "duplicate immutable GitHub repository IDs are not rejected"
+grep -q 'id > 0 && floor(id) == id' terraform/variables.tf ||
+  fail "non-positive or non-integer GitHub repository IDs are not rejected"
+if grep -RqsE 'repo:sports-store-devops-team/(sports-store-(frontend|auth-service|catalog-service|cart-service|order-service|payment-service))' terraform \
+  --include='*.tf' --include='*.tftest.hcl' --exclude-dir=.terraform; then
+  fail "legacy name-only GitHub OIDC subject remains"
+fi
 grep -q 'resource "aws_s3_bucket" "static_site"' terraform/static-site.tf || fail "private static bucket is missing"
 grep -q 'force_destroy = true' terraform/static-site.tf || fail "static bucket must be removable with course teardown"
 for control in block_public_acls block_public_policy ignore_public_acls restrict_public_buckets; do
@@ -146,6 +157,10 @@ oidc_trust="$(sed -n '1,/^resource "aws_iam_role" "github_ecr_publisher"/p' terr
 if grep -q 'StringLike' <<<"$oidc_trust" || grep -q '@\*' <<<"$oidc_trust" || grep -q '"\*"' <<<"$oidc_trust"; then
   fail "OIDC trust contains wildcard subject matching"
 fi
+grep -q 'name[[:space:]]*= "sports-store-github-ecr-publisher"' terraform/iam-oidc.tf ||
+  fail "existing ECR publisher role name changed"
+grep -q 'name[[:space:]]*= "sports-store-github-static-site-publisher"' terraform/static-publication-iam.tf ||
+  fail "existing frontend publisher role name changed"
 grep -q 'gh workflow run ci.yaml' deploy.sh || fail "deploy does not dispatch ci.yaml explicitly"
 grep -q -- '--ref main' deploy.sh || fail "deploy does not pin workflow dispatches to main"
 grep -q -- 'expected_sha=' deploy.sh || fail "deploy does not send the expected main SHA"

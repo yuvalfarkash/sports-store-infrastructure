@@ -16,8 +16,9 @@ roles through OIDC and temporary credentials. The five backend repositories use
 `AWS_REGION` and `AWS_ECR_PUBLISH_ROLE_ARN`. The frontend uses `AWS_REGION`,
 `AWS_STATIC_SITE_ROLE_ARN`, and `AWS_STATIC_SITE_BUCKET`; its dedicated role can
 only synchronize objects in the exact static-site bucket. `deploy.sh` sets and
-reads back these non-secret variables before rerunning the latest `main` push
-workflows. It never configures the local-only Gateway.
+reads back these non-secret variables before dispatching `ci.yaml` on `main`
+for the exact remote `main` revision. It never configures the local-only
+Gateway.
 
 Sports Store workflows pin Trivy Action `v0.36.0` to the verified immutable
 commit `a9c7b0f06e461e9d4b4d1711f154ee024b8d7ab8`, following Aqua's
@@ -63,6 +64,20 @@ Terraform in `terraform/` defines the AWS foundation: networking, EKS, add-ons, 
 - A low-cost `PriceClass_100` CloudFront distribution using its default domain and certificate, signed S3 OAC requests, and an HTTP ALB API origin
 
 All Terraform-managed AWS resources receive the `Project=sports-store`, `Environment=dev`, and `ManagedBy=terraform` tags where AWS supports tagging.
+
+The EKS module has `enable_cluster_creator_admin_permissions = true`, so it is
+the sole Terraform owner of the deployment principal's EKS access entry and
+`AmazonEKSClusterAdminPolicy` association. `additional_eks_principal_arns` is
+only for genuinely additional same-account administrators. The standalone
+access resources deduplicate that list and filter the deployment principal if
+it is repeated accidentally; callers should still omit that principal from the
+variable.
+
+Terraform installs the AWS Load Balancer Controller first and waits, with a
+bounded timeout, for its Helm release to become ready. External Secrets, Argo
+CD, and Metrics Server explicitly depend on that release; Argo CD Image Updater
+then waits transitively through Argo CD. This prevents Service-creating charts
+from racing the controller's mutating webhook before its Service has endpoints.
 
 The external request path is:
 
@@ -250,12 +265,20 @@ The script performs this sequence:
 
 1. Verifies account `123456789012` and validates both state roots.
 2. Applies the base root in the operator's account.
-3. Reads and validates the static bucket and both publisher-role outputs. It configures the frontend's three static-publication variables, then the five backends' ECR variables, and reruns and waits for each latest `main` push workflow. This preserves the push-only publication gates; a dispatch event validates without publishing. The first frontend `main` run may fail before Terraform creates/configures the bucket and role, so this controlled rerun is intentional.
+3. Reads and validates the static bucket and both publisher-role outputs. It configures the frontend's three static-publication variables, then the five backends' ECR variables. For every application repository it reads the exact remote `main` SHA, dispatches `ci.yaml` on `main` with `expected_sha` and a unique `deployment_id`, correlates the exact newly created run, and watches that run to completion. Historical workflow runs are never rerun.
 4. Bootstraps the first Secrets Manager version without printing its values.
 5. Configures `kubectl`, waits for Argo CD and the ALB with bounded polling, and validates the hostname.
 6. Applies the separate CloudFront root with the validated ALB and S3 inputs, then prints the CloudFront HTTPS URL and direct ALB API troubleshooting URL. `deploy.sh` never uploads frontend files; GitHub Actions owns the build and S3 synchronization.
 
 On a clean deployment the CloudFront root contains no distribution until stage 2 receives a valid hostname. On a repeated deployment, the base root cannot alter the distribution because it has separate state; stage 2 idempotently reconciles the existing distribution with the current Ingress hostname. This also accommodates an ALB replacement.
+
+If `deploy.sh` stops partway through the base Terraform apply, preserve
+`terraform/terraform.tfstate`, its backup, and `terraform/.terraform`. Correct
+the underlying configuration or readiness problem, then rerun `bash deploy.sh`
+from the same repository directory. Terraform resumes from the resources
+recorded in the local state. Do not delete or recreate the state as a recovery
+step. A corrective code-only change does not itself deploy or repair live
+resources.
 
 Because AWS no longer runs a frontend Kubernetes workload, the base configuration removes the now-unused `sports-store-frontend` ECR repository and its shared ECR publication permission. A future reviewed base apply will delete that repository and any images it contains (`force_delete = true`); no live deletion was performed while implementing this change.
 

@@ -6,6 +6,23 @@ fail() {
   exit 1
 }
 
+terraform_resource_block() {
+  local resource_type="$1"
+  local resource_name="$2"
+  local file="$3"
+
+  awk -v declaration="resource \"$resource_type\" \"$resource_name\"" '
+    index($0, declaration) == 1 { printing = 1 }
+    printing {
+      print
+      opens = gsub(/{/, "{")
+      closes = gsub(/}/, "}")
+      depth += opens - closes
+      if (depth == 0) exit
+    }
+  ' "$file"
+}
+
 grep -q 'targetRevision = "main"' terraform/automation.tf || fail "Argo CD no longer targets main"
 grep -q 'name = "sports-store"' terraform/automation.tf || fail "namespace changed"
 grep -q 'targetRevision = "main"' terraform/automation.tf || fail "Argo CD no longer targets main"
@@ -37,7 +54,32 @@ grep -A 90 'resource "kubectl_manifest" "argocd_loki_app"' terraform/automation.
 grep -A 90 'resource "kubectl_manifest" "argocd_alloy_app"' terraform/automation.tf |
   grep -q 'kubectl_manifest.argocd_loki_app' || fail "Alloy must depend on Loki"
 grep -q 'deployment_principal_arn' config/aws-environment.json || fail "authoritative deployment principal is missing"
-grep -q '\[local.deployment_principal\]' terraform/eks-iam.tf || fail "deployment principal is not granted EKS access"
+grep -q 'enable_cluster_creator_admin_permissions = true' terraform/eks.tf ||
+  fail "EKS module no longer owns cluster-creator administration"
+grep -q 'if arn != local.deployment_principal' terraform/eks-iam.tf ||
+  fail "standalone EKS access entries do not filter the deployment principal"
+if grep -q '\[local.deployment_principal\]' terraform/eks-iam.tf; then
+  fail "deployment principal is still managed by the standalone EKS access-entry resource"
+fi
+grep -q 'for_each = local.approved_eks_principal_arns' terraform/eks-iam.tf ||
+  fail "additional EKS access entries do not use the filtered, deduplicated principal set"
+grep -A 18 'resource "aws_eks_access_policy_association" "approved_principals_admin"' terraform/eks-iam.tf |
+  grep -q 'AmazonEKSClusterAdminPolicy' || fail "additional EKS principals lost cluster-admin association"
+
+for release in external_secrets argocd metrics_server; do
+  terraform_resource_block helm_release "$release" terraform/helm.tf |
+    grep -q 'helm_release.aws_load_balancer_controller' ||
+    fail "$release can start before the AWS Load Balancer Controller is ready"
+done
+terraform_resource_block helm_release argocd_image_updater terraform/helm.tf |
+  grep -q 'helm_release.argocd' || fail "Argo CD Image Updater no longer waits for Argo CD"
+[[ "$(grep -c 'wait[[:space:]]*= true' terraform/helm.tf)" -eq 5 ]] ||
+  fail "every Terraform-managed Helm release must explicitly wait for readiness"
+[[ "$(grep -c 'timeout[[:space:]]*= 600' terraform/helm.tf)" -eq 5 ]] ||
+  fail "every Terraform-managed Helm release must use the bounded timeout"
+if grep -Eq '(^|[[:space:]])(sleep|local-exec|remote-exec|provisioner|null_resource)([[:space:]]|=|$)' terraform/helm.tf; then
+  fail "Helm ordering must not use sleeps, provisioners, or null resources"
+fi
 grep -q 'aquasecurity/trivy-action@a9c7b0f06e461e9d4b4d1711f154ee024b8d7ab8  # v0.36.0' .github/workflows/ci.yaml ||
   fail "Trivy Action is not pinned to the verified v0.36.0 commit"
 

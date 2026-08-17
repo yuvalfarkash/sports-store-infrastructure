@@ -154,6 +154,70 @@ run "managed_node_group_configuration" {
   }
 }
 
+run "deployment_principal_is_module_owned_only" {
+  command = plan
+
+  plan_options {
+    target = [aws_eks_access_entry.approved_principals]
+  }
+
+  assert {
+    condition     = length(aws_eks_access_entry.approved_principals) == 0
+    error_message = "The standalone access-entry resource must not manage the deployment principal."
+  }
+}
+
+run "additional_eks_principals_are_filtered_and_deduplicated" {
+  command = plan
+
+  variables {
+    additional_eks_principal_arns = [
+      "arn:aws:iam::123456789012:role/PlatformAdmin",
+      "arn:aws:iam::123456789012:user/deploy-user",
+      "arn:aws:iam::123456789012:role/PlatformAdmin",
+    ]
+  }
+
+  plan_options {
+    target = [
+      aws_eks_access_entry.approved_principals,
+      aws_eks_access_policy_association.approved_principals_admin,
+    ]
+  }
+
+  assert {
+    condition = toset(keys(aws_eks_access_entry.approved_principals)) == toset([
+      "arn:aws:iam::123456789012:role/PlatformAdmin",
+    ])
+    error_message = "Additional principals must be deduplicated and the deployment principal must be filtered."
+  }
+
+  assert {
+    condition = toset(keys(aws_eks_access_policy_association.approved_principals_admin)) == toset([
+      "arn:aws:iam::123456789012:role/PlatformAdmin",
+    ])
+    error_message = "Each additional principal must retain the cluster-admin policy association."
+  }
+}
+
+run "wrong_account_additional_eks_principal_is_rejected" {
+  command = plan
+
+  variables {
+    additional_eks_principal_arns = [
+      "arn:aws:iam::324621154117:role/WrongAccountAdmin",
+    ]
+  }
+
+  plan_options {
+    target = [aws_eks_access_entry.approved_principals]
+  }
+
+  expect_failures = [
+    aws_eks_access_entry.approved_principals["arn:aws:iam::324621154117:role/WrongAccountAdmin"],
+  ]
+}
+
 run "wrong_account_rejected" {
   command = plan
 

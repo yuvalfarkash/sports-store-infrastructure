@@ -56,16 +56,18 @@ resource "aws_iam_role_policy_attachment" "argocd_image_updater_ecr_read" {
   depends_on = [module.argocd_image_updater_irsa]
 }
 
-# Grants explicitly approved same-account principals direct kubectl access.
+# Grants additional explicitly approved same-account principals direct kubectl
+# access. The EKS module exclusively owns the deployment principal's
+# cluster-creator access entry and admin policy association.
 locals {
-  approved_eks_principal_arns = concat(
-    [local.deployment_principal],
-    var.additional_eks_principal_arns,
-  )
+  approved_eks_principal_arns = toset([
+    for arn in var.additional_eks_principal_arns : arn
+    if arn != local.deployment_principal
+  ])
 }
 
 resource "aws_eks_access_entry" "approved_principals" {
-  for_each = toset(local.approved_eks_principal_arns)
+  for_each = local.approved_eks_principal_arns
 
   cluster_name  = module.eks.cluster_name
   principal_arn = each.value

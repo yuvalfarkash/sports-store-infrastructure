@@ -4,6 +4,8 @@ resource "helm_release" "aws_load_balancer_controller" {
   chart      = "aws-load-balancer-controller"
   namespace  = "kube-system"
   version    = "1.9.0"
+  wait       = true
+  timeout    = 600
 
   set {
     name  = "clusterName"
@@ -69,6 +71,8 @@ resource "helm_release" "external_secrets" {
   chart      = "external-secrets"
   namespace  = kubernetes_namespace_v1.external_secrets.metadata[0].name
   version    = "2.8.0"
+  wait       = true
+  timeout    = 600
 
   values = [
     yamlencode({
@@ -86,6 +90,7 @@ resource "helm_release" "external_secrets" {
   depends_on = [
     kubernetes_namespace_v1.external_secrets,
     aws_iam_role_policy.external_secrets,
+    helm_release.aws_load_balancer_controller,
   ]
 }
 
@@ -96,6 +101,8 @@ resource "helm_release" "argocd" {
   namespace        = "argocd"
   create_namespace = true
   version          = "7.4.4"
+  wait             = true
+  timeout          = 600
 
   # This cluster has one static Application (see automation.tf) with no SSO,
   # so Dex and notifications are disabled - both would be unused pods. The chart (7.4.4)
@@ -133,9 +140,10 @@ resource "helm_release" "argocd" {
     })
   ]
 
-  # Ensure the helm release happens after EKS cluster is fully ready
+  # The controller's ready webhook Service must exist before charts that
+  # create Services can begin installation.
   depends_on = [
-    module.eks
+    helm_release.aws_load_balancer_controller
   ]
 }
 
@@ -145,6 +153,8 @@ resource "helm_release" "argocd_image_updater" {
   chart      = "argocd-image-updater"
   namespace  = "argocd"
   version    = "0.10.0"
+  wait       = true
+  timeout    = 600
 
   set {
     name  = "serviceAccount.annotations.eks\\.amazonaws\\.com/role-arn"
@@ -205,5 +215,7 @@ resource "helm_release" "metrics_server" {
   chart      = "metrics-server"
   namespace  = "kube-system"
   version    = "3.12.1"
-  depends_on = [module.eks]
+  wait       = true
+  timeout    = 600
+  depends_on = [helm_release.aws_load_balancer_controller]
 }

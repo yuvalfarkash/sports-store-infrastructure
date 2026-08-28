@@ -19,6 +19,8 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v5
+      - name: Provide placeholder AWS environment config for CI
+        run: cp config/aws-environment.json.example config/aws-environment.json
       - uses: hashicorp/setup-terraform@v3
         with:
           terraform_version: 1.15.6

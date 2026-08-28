@@ -55,7 +55,7 @@ run "expected_account_configuration" {
 
   assert {
     condition     = local.account_id == "123456789012" && local.application_image_registry == "123456789012.dkr.ecr.eu-central-1.amazonaws.com"
-    error_message = "The ECR registry must be derived from the authenticated the operator account and configured region."
+    error_message = "The ECR registry must be derived from the authenticated account and configured region."
   }
 
   assert {
@@ -75,15 +75,15 @@ run "expected_account_configuration" {
 
   assert {
     condition = (
-      var.github_organization == "sports-store-devops-team" &&
-      var.github_organization_id == 311871744 &&
+      var.github_organization == "yuvalfarkash" &&
+      var.github_organization_id == 78908574 &&
       var.github_repository_ids == tomap({
-        sports-store-frontend        = 1319569364
-        sports-store-auth-service    = 1319569433
-        sports-store-catalog-service = 1319569475
-        sports-store-cart-service    = 1319569543
-        sports-store-order-service   = 1319569596
-        sports-store-payment-service = 1319569661
+        sports-store-frontend        = 1349844546
+        sports-store-auth-service    = 1349844338
+        sports-store-catalog-service = 1349844250
+        sports-store-cart-service    = 1349844165
+        sports-store-order-service   = 1349844068
+        sports-store-payment-service = 1349843991
       })
     )
     error_message = "GitHub publishing trust must use the exact reviewed organization and repository identities."
@@ -91,11 +91,11 @@ run "expected_account_configuration" {
 
   assert {
     condition = toset(local.github_oidc_subjects) == toset([
-      "repo:sports-store-devops-team@311871744/sports-store-auth-service@1319569433:ref:refs/heads/main",
-      "repo:sports-store-devops-team@311871744/sports-store-catalog-service@1319569475:ref:refs/heads/main",
-      "repo:sports-store-devops-team@311871744/sports-store-cart-service@1319569543:ref:refs/heads/main",
-      "repo:sports-store-devops-team@311871744/sports-store-order-service@1319569596:ref:refs/heads/main",
-      "repo:sports-store-devops-team@311871744/sports-store-payment-service@1319569661:ref:refs/heads/main",
+      "repo:yuvalfarkash@78908574/sports-store-auth-service@1349844338:ref:refs/heads/main",
+      "repo:yuvalfarkash@78908574/sports-store-catalog-service@1349844250:ref:refs/heads/main",
+      "repo:yuvalfarkash@78908574/sports-store-cart-service@1349844165:ref:refs/heads/main",
+      "repo:yuvalfarkash@78908574/sports-store-order-service@1349844068:ref:refs/heads/main",
+      "repo:yuvalfarkash@78908574/sports-store-payment-service@1349843991:ref:refs/heads/main",
     ])
     error_message = "ECR OIDC subjects must be exactly the five approved backend repositories on main."
   }
@@ -104,10 +104,10 @@ run "expected_account_configuration" {
     condition = (
       length(local.github_oidc_subjects) == 5 &&
       alltrue([for subject in local.github_oidc_subjects : endswith(subject, ":ref:refs/heads/main")]) &&
-      alltrue([for subject in local.github_oidc_subjects : can(regex("^repo:sports-store-devops-team@311871744/sports-store-[a-z-]+@[1-9][0-9]*:ref:refs/heads/main$", subject))]) &&
+      alltrue([for subject in local.github_oidc_subjects : can(regex("^repo:yuvalfarkash@78908574/sports-store-[a-z-]+@[1-9][0-9]*:ref:refs/heads/main$", subject))]) &&
       alltrue([for subject in local.github_oidc_subjects : !strcontains(subject, "*")]) &&
       alltrue([for subject in local.github_oidc_subjects : !strcontains(subject, "sports-store-gateway")]) &&
-      alltrue([for subject in local.github_oidc_subjects : !strcontains(subject, "repo:sports-store-devops-team/")])
+      alltrue([for subject in local.github_oidc_subjects : !strcontains(subject, "repo:yuvalfarkash/")])
     )
     error_message = "OIDC trust must not include Gateway, wildcard identities, or non-main refs."
   }
@@ -134,7 +134,7 @@ run "expected_account_configuration" {
 
   assert {
     condition = (
-      local.github_static_site_oidc_subject == "repo:sports-store-devops-team@311871744/sports-store-frontend@1319569364:ref:refs/heads/main" &&
+      local.github_static_site_oidc_subject == "repo:yuvalfarkash@78908574/sports-store-frontend@1349844546:ref:refs/heads/main" &&
       toset(local.static_site_bucket_actions) == toset(["s3:GetBucketLocation", "s3:ListBucket"]) &&
       toset(local.static_site_object_actions) == toset(["s3:PutObject", "s3:DeleteObject"])
     )
@@ -166,11 +166,11 @@ run "missing_github_repository_id_is_rejected" {
 
   variables {
     github_repository_ids = {
-      sports-store-frontend        = 1319569364
-      sports-store-auth-service    = 1319569433
-      sports-store-catalog-service = 1319569475
-      sports-store-cart-service    = 1319569543
-      sports-store-order-service   = 1319569596
+      sports-store-frontend        = 1349844546
+      sports-store-auth-service    = 1349844338
+      sports-store-catalog-service = 1349844250
+      sports-store-cart-service    = 1349844165
+      sports-store-order-service   = 1349844068
     }
   }
 
@@ -182,12 +182,12 @@ run "extra_github_repository_id_is_rejected" {
 
   variables {
     github_repository_ids = {
-      sports-store-frontend        = 1319569364
-      sports-store-auth-service    = 1319569433
-      sports-store-catalog-service = 1319569475
-      sports-store-cart-service    = 1319569543
-      sports-store-order-service   = 1319569596
-      sports-store-payment-service = 1319569661
+      sports-store-frontend        = 1349844546
+      sports-store-auth-service    = 1349844338
+      sports-store-catalog-service = 1349844250
+      sports-store-cart-service    = 1349844165
+      sports-store-order-service   = 1349844068
+      sports-store-payment-service = 1349843991
       sports-store-gateway         = 1319569700
     }
   }
@@ -200,12 +200,12 @@ run "duplicate_github_repository_id_is_rejected" {
 
   variables {
     github_repository_ids = {
-      sports-store-frontend        = 1319569364
-      sports-store-auth-service    = 1319569433
-      sports-store-catalog-service = 1319569475
-      sports-store-cart-service    = 1319569543
-      sports-store-order-service   = 1319569596
-      sports-store-payment-service = 1319569596
+      sports-store-frontend        = 1349844546
+      sports-store-auth-service    = 1349844338
+      sports-store-catalog-service = 1349844250
+      sports-store-cart-service    = 1349844165
+      sports-store-order-service   = 1349844068
+      sports-store-payment-service = 1349844068
     }
   }
 
@@ -217,12 +217,12 @@ run "zero_github_repository_id_is_rejected" {
 
   variables {
     github_repository_ids = {
-      sports-store-frontend        = 1319569364
+      sports-store-frontend        = 1349844546
       sports-store-auth-service    = 0
-      sports-store-catalog-service = 1319569475
-      sports-store-cart-service    = 1319569543
-      sports-store-order-service   = 1319569596
-      sports-store-payment-service = 1319569661
+      sports-store-catalog-service = 1349844250
+      sports-store-cart-service    = 1349844165
+      sports-store-order-service   = 1349844068
+      sports-store-payment-service = 1349843991
     }
   }
 
@@ -234,12 +234,12 @@ run "negative_github_repository_id_is_rejected" {
 
   variables {
     github_repository_ids = {
-      sports-store-frontend        = 1319569364
-      sports-store-auth-service    = -1319569433
-      sports-store-catalog-service = 1319569475
-      sports-store-cart-service    = 1319569543
-      sports-store-order-service   = 1319569596
-      sports-store-payment-service = 1319569661
+      sports-store-frontend        = 1349844546
+      sports-store-auth-service    = -1349844338
+      sports-store-catalog-service = 1349844250
+      sports-store-cart-service    = 1349844165
+      sports-store-order-service   = 1349844068
+      sports-store-payment-service = 1349843991
     }
   }
 
@@ -323,7 +323,7 @@ run "wrong_account_additional_eks_principal_is_rejected" {
 
   variables {
     additional_eks_principal_arns = [
-      "arn:aws:iam::324621154117:role/WrongAccountAdmin",
+      "arn:aws:iam::999999999999:role/WrongAccountAdmin",
     ]
   }
 
@@ -332,7 +332,7 @@ run "wrong_account_additional_eks_principal_is_rejected" {
   }
 
   expect_failures = [
-    aws_eks_access_entry.approved_principals["arn:aws:iam::324621154117:role/WrongAccountAdmin"],
+    aws_eks_access_entry.approved_principals["arn:aws:iam::999999999999:role/WrongAccountAdmin"],
   ]
 }
 
@@ -346,8 +346,8 @@ run "wrong_account_rejected" {
   override_data {
     target = data.aws_caller_identity.current
     values = {
-      account_id = "324621154117"
-      arn        = "arn:aws:iam::324621154117:user/wrong-account"
+      account_id = "999999999999"
+      arn        = "arn:aws:iam::999999999999:user/wrong-account"
       user_id    = "AIDAWRONGACCOUNT"
     }
   }

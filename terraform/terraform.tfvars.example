@@ -2,7 +2,7 @@
 aws_region         = "eu-central-1"
 cluster_name       = "sports-store-cluster"
 vpc_cidr           = "10.0.0.0/16"
-github_organization = "sports-store-devops-team"
+github_organization = "yuvalfarkash"
 
 github_repositories = [
   "sports-store-frontend",

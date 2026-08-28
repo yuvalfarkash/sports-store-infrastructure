@@ -29,7 +29,7 @@ gh() {
           *) return 1 ;;
         esac
       done
-      [[ "$repository" == sports-store-devops-team/* ]] || return 1
+      [[ "$repository" == yuvalfarkash/* ]] || return 1
       VARIABLES["$repository:$name"]="$value"
       SET_REPOSITORIES+=("$repository")
       ;;

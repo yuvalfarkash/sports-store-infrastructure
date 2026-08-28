@@ -19,22 +19,22 @@ variable "vpc_cidr" {
 variable "github_organization" {
   description = "GitHub organization login allowed to publish application artifacts"
   type        = string
-  default     = "sports-store-devops-team"
+  default     = "yuvalfarkash"
 
   validation {
-    condition     = var.github_organization == "sports-store-devops-team"
-    error_message = "github_organization must be exactly sports-store-devops-team."
+    condition     = var.github_organization == "yuvalfarkash"
+    error_message = "github_organization must be exactly yuvalfarkash."
   }
 }
 
 variable "github_organization_id" {
   description = "Immutable GitHub organization ID allowed to publish application artifacts"
   type        = number
-  default     = 311871744
+  default     = 78908574
 
   validation {
-    condition     = var.github_organization_id == 311871744
-    error_message = "github_organization_id must be exactly 311871744."
+    condition     = var.github_organization_id == 78908574
+    error_message = "github_organization_id must be exactly 78908574."
   }
 }
 
@@ -42,12 +42,12 @@ variable "github_repository_ids" {
   description = "Exact approved GitHub repository names mapped to their immutable repository IDs"
   type        = map(number)
   default = {
-    sports-store-frontend        = 1319569364
-    sports-store-auth-service    = 1319569433
-    sports-store-catalog-service = 1319569475
-    sports-store-cart-service    = 1319569543
-    sports-store-order-service   = 1319569596
-    sports-store-payment-service = 1319569661
+    sports-store-frontend        = 1349844546
+    sports-store-auth-service    = 1349844338
+    sports-store-catalog-service = 1349844250
+    sports-store-cart-service    = 1349844165
+    sports-store-order-service   = 1349844068
+    sports-store-payment-service = 1349843991
   }
 
   validation {
@@ -74,12 +74,12 @@ variable "github_repository_ids" {
 
   validation {
     condition = var.github_repository_ids == tomap({
-      sports-store-frontend        = 1319569364
-      sports-store-auth-service    = 1319569433
-      sports-store-catalog-service = 1319569475
-      sports-store-cart-service    = 1319569543
-      sports-store-order-service   = 1319569596
-      sports-store-payment-service = 1319569661
+      sports-store-frontend        = 1349844546
+      sports-store-auth-service    = 1349844338
+      sports-store-catalog-service = 1349844250
+      sports-store-cart-service    = 1349844165
+      sports-store-order-service   = 1349844068
+      sports-store-payment-service = 1349843991
     })
     error_message = "github_repository_ids must exactly match the reviewed GitHub API identity audit."
   }

@@ -14,7 +14,7 @@ readonly APP_NAMESPACE="sports-store"
 readonly ARGOCD_NAMESPACE="argocd"
 readonly ARGOCD_APPLICATION="sports-store"
 readonly INGRESS_NAME="sports-store"
-readonly GITHUB_ORGANIZATION="sports-store-devops-team"
+readonly GITHUB_ORGANIZATION="yuvalfarkash"
 readonly -a APPLICATION_REPOSITORIES=(
   "sports-store-frontend"
   "sports-store-auth-service"

@@ -41,7 +41,7 @@ grep -q '\$values/logging/loki-values.yaml' terraform/automation.tf || fail "Lok
 grep -q '\$values/logging/alloy-values.yaml' terraform/automation.tf || fail "Alloy values source is missing"
 [[ "$(grep -c 'targetRevision = "main"' terraform/automation.tf)" -eq 5 ]] ||
   fail "all five deployment Git sources must target main"
-forbidden_revision="the operator""Branch"
+forbidden_revision="dev""Branch"
 if grep -q "targetRevision[[:space:]]*= \"$forbidden_revision\"" terraform/automation.tf; then
   fail "Argo CD must never target the development branch"
 fi
@@ -53,7 +53,7 @@ grep -A 90 'resource "kubectl_manifest" "argocd_loki_app"' terraform/automation.
   grep -q 'kubectl_manifest.argocd_monitoring_app' || fail "Loki must depend on monitoring"
 grep -A 90 'resource "kubectl_manifest" "argocd_alloy_app"' terraform/automation.tf |
   grep -q 'kubectl_manifest.argocd_loki_app' || fail "Alloy must depend on Loki"
-grep -q 'deployment_principal_arn' config/aws-environment.json || fail "authoritative deployment principal is missing"
+grep -q 'deployment_principal_arn' config/aws-environment.json.example || fail "authoritative deployment principal is missing"
 grep -q 'enable_cluster_creator_admin_permissions = true' terraform/eks.tf ||
   fail "EKS module no longer owns cluster-creator administration"
 grep -q 'if arn != local.deployment_principal' terraform/eks-iam.tf ||
@@ -113,15 +113,15 @@ grep -A 3 'variable = "token.actions.githubusercontent.com:aud"' terraform/iam-o
   grep -q 'values[[:space:]]*= \["sts.amazonaws.com"\]' || fail "OIDC audience condition is not restricted to AWS STS"
 grep -q 'repo:${var.github_organization}@${var.github_organization_id}/${repository}@${lookup(var.github_repository_ids, repository, 0)}:ref:refs/heads/main' terraform/iam-oidc.tf ||
   fail "immutable backend OIDC main-branch subject is missing"
-grep -Eq 'default[[:space:]]*= "sports-store-devops-team"' terraform/variables.tf || fail "OIDC organization trust changed"
-grep -Eq 'default[[:space:]]*= 311871744' terraform/variables.tf || fail "immutable GitHub organization ID changed"
+grep -Eq 'default[[:space:]]*= "yuvalfarkash"' terraform/variables.tf || fail "OIDC organization trust changed"
+grep -Eq 'default[[:space:]]*= 78908574' terraform/variables.tf || fail "immutable GitHub organization ID changed"
 for repository_identity in \
-  'sports-store-frontend[[:space:]]*=[[:space:]]*1319569364' \
-  'sports-store-auth-service[[:space:]]*=[[:space:]]*1319569433' \
-  'sports-store-catalog-service[[:space:]]*=[[:space:]]*1319569475' \
-  'sports-store-cart-service[[:space:]]*=[[:space:]]*1319569543' \
-  'sports-store-order-service[[:space:]]*=[[:space:]]*1319569596' \
-  'sports-store-payment-service[[:space:]]*=[[:space:]]*1319569661'; do
+  'sports-store-frontend[[:space:]]*=[[:space:]]*1349844546' \
+  'sports-store-auth-service[[:space:]]*=[[:space:]]*1349844338' \
+  'sports-store-catalog-service[[:space:]]*=[[:space:]]*1349844250' \
+  'sports-store-cart-service[[:space:]]*=[[:space:]]*1349844165' \
+  'sports-store-order-service[[:space:]]*=[[:space:]]*1349844068' \
+  'sports-store-payment-service[[:space:]]*=[[:space:]]*1349843991'; do
   grep -Eq "$repository_identity" terraform/variables.tf || fail "approved immutable OIDC repository identity is missing: $repository_identity"
 done
 grep -q 'repo:${var.github_organization}@${var.github_organization_id}/sports-store-frontend@${lookup(var.github_repository_ids, "sports-store-frontend", 0)}:ref:refs/heads/main' terraform/static-publication-iam.tf ||
@@ -130,7 +130,7 @@ grep -q 'length(distinct(values(var.github_repository_ids))) == length(var.githu
   fail "duplicate immutable GitHub repository IDs are not rejected"
 grep -q 'id > 0 && floor(id) == id' terraform/variables.tf ||
   fail "non-positive or non-integer GitHub repository IDs are not rejected"
-if grep -RqsE 'repo:sports-store-devops-team/(sports-store-(frontend|auth-service|catalog-service|cart-service|order-service|payment-service))' terraform \
+if grep -RqsE 'repo:yuvalfarkash/(sports-store-(frontend|auth-service|catalog-service|cart-service|order-service|payment-service))' terraform \
   --include='*.tf' --include='*.tftest.hcl' --exclude-dir=.terraform; then
   fail "legacy name-only GitHub OIDC subject remains"
 fi

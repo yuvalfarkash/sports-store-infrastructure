@@ -2,6 +2,10 @@
 set -euo pipefail
 
 TEST_ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
+# config/aws-environment.json is a git-ignored, developer-supplied file (real
+# account ID/ARN); this test only needs a readable file for the file-existence
+# check below, since jq is mocked and never actually parses its contents.
+export AWS_ENVIRONMENT_FILE="$TEST_ROOT/config/aws-environment.json.example"
 # shellcheck source=../scripts/aws-account-safety.sh
 source "$TEST_ROOT/scripts/aws-account-safety.sh"
 
@@ -68,8 +72,8 @@ assert_identity_accepted '123456789012' 'arn:aws:iam::123456789012:user/deploy-u
 assert_identity_accepted '123456789012' 'arn:aws-us-gov:iam::123456789012:role/team/DeploymentRole' 'expected IAM role'
 assert_identity_accepted '123456789012' 'arn:aws-cn:sts::123456789012:assumed-role/DeploymentRole/github-actions' 'expected assumed role'
 
-assert_identity_rejected '324621154117' 'arn:aws:sts::324621154117:assumed-role/DeploymentRole/session' 'wrong-account assumed role'
-assert_identity_rejected '324621154117' 'arn:aws:iam::324621154117:user/wrong' 'wrong-account IAM user'
+assert_identity_rejected '999999999999' 'arn:aws:sts::999999999999:assumed-role/DeploymentRole/session' 'wrong-account assumed role'
+assert_identity_rejected '999999999999' 'arn:aws:iam::999999999999:user/wrong' 'wrong-account IAM user'
 assert_identity_rejected '123456789012' 'arn:aws:iam::123456789012:root' 'root identity'
 assert_identity_rejected '123456789012' 'arn:aws:sts::123456789012:federated-user/example' 'federated user'
 assert_identity_rejected '123456789012' 'arn:aws:iam::123456789012:role/' 'malformed ARN'
@@ -101,7 +105,7 @@ terraform() {
     'correct:'*' state list') printf 'aws_ecr_repository.services["frontend"]\n' ;;
     'correct:'*' output -raw expected_aws_account_id') printf '123456789012\n' ;;
     'wrong:'*' state list') printf 'aws_ecr_repository.services["frontend"]\n' ;;
-    'wrong:'*' output -raw expected_aws_account_id') printf '324621154117\n' ;;
+    'wrong:'*' output -raw expected_aws_account_id') printf '999999999999\n' ;;
     *) return 1 ;;
   esac
 }

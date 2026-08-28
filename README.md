@@ -2,14 +2,17 @@
 
 ## AWS account boundary
 
-This configuration targets AWS account `123456789012` in `eu-central-1`. The
-default approved deployment and EKS administration principal is
-`arn:aws:iam::123456789012:user/deploy-user`. Both Terraform roots and every
-mutating operational script reject any other active AWS account before changes
-begin. Verify identity with `aws sts get-caller-identity --output json`.
+This configuration targets whichever AWS account and principal are configured
+in the local, git-ignored `config/aws-environment.json` (see
+`config/aws-environment.json.example` for the expected shape) — for example an
+account `123456789012` in `eu-central-1` with default approved deployment and
+EKS administration principal `arn:aws:iam::123456789012:user/deploy-user`. Both
+Terraform roots and every mutating operational script reject any other active
+AWS account before changes begin. Verify identity with
+`aws sts get-caller-identity --output json`.
 The scripts require `jq` and accept structurally valid IAM user, IAM role, or
-STS assumed-role caller identities only; the returned account must still be
-`123456789012`.
+STS assumed-role caller identities only; the returned account must still match
+`expected_account_id` from that local configuration file.
 
 Do not commit long-lived access keys. GitHub Actions assumes Terraform-created
 roles through OIDC and temporary credentials. The five backend repositories use
@@ -33,8 +36,8 @@ Verify the identifiers through read-only GitHub API calls before reviewing a
 trust change:
 
 ```bash
-gh api /orgs/sports-store-devops-team --jq '{login, id}'
-gh api /repos/sports-store-devops-team/REPOSITORY --jq '{name, id, owner: .owner.login, owner_id: .owner.id, created_at, archived}'
+gh api /orgs/yuvalfarkash --jq '{login, id}'
+gh api /repos/yuvalfarkash/REPOSITORY --jq '{name, id, owner: .owner.login, owner_id: .owner.id, created_at, archived}'
 ```
 
 Renaming the organization or a repository does not change its immutable numeric
@@ -50,7 +53,7 @@ Review GitHub workflow logs from March 19-20, 2026 and rotate potentially
 exposed credentials if evidence shows an affected mutable tag ran then.
 
 The partially deployed base Terraform state owns the single GitHub Actions OIDC
-provider in the operator's account for
+provider in the target AWS account for
 `https://token.actions.githubusercontent.com`, with `sts.amazonaws.com` as its
 only client ID, before creating the ECR publishing role that references its ARN.
 The provider configuration intentionally omits TLS thumbprints: the pinned AWS
@@ -240,14 +243,12 @@ Configure the required HCP Terraform project, workspace, variable set, AWS trust
 
 The CloudFront root has independent lifecycle and state so a repeated stage-1 apply cannot plan deletion of an existing distribution merely because an ALB hostname is not yet available as an input. Configure a second state/backend for working directory `terraform/cloudfront`; do not point both roots at the same state. Preserve and lock both states.
 
-the operator's account must use two new, empty, separately locked states: one for
-`terraform/` and one for `terraform/cloudfront/`. Never copy, select, migrate,
-import, overwrite, or reuse state from another AWS account. Preserve Yuval's
-old states in their original backends/workspaces with lineage unchanged; use
-them only with Yuval's account for explicitly approved cleanup. Before the operator's
-first deployment, initialize each root against its new backend and confirm
-`terraform state list` is empty. The scripts reject non-empty legacy state
-without the expected-account output.
+Each AWS account this is deployed into must use two new, empty, separately
+locked states: one for `terraform/` and one for `terraform/cloudfront/`. Never
+copy, select, migrate, import, overwrite, or reuse state from another AWS
+account. Before the first deployment into a new account, initialize each root
+against its new backend and confirm `terraform state list` is empty. The
+scripts reject non-empty legacy state without the expected-account output.
 
 ## Initialize and validate
 
@@ -278,7 +279,7 @@ Do not use a local plan as a substitute for the reviewed VCS-driven HCP Terrafor
 
 The ALB is created asynchronously by AWS Load Balancer Controller only after Argo CD creates the Helm Ingress. Terraform therefore cannot know the ALB hostname during the initial base plan. The two independent roots avoid a circular dependency and require no provisioner, generated variable file, direct AWS CLI CloudFront mutation, or Terraform state manipulation.
 
-On a workstation authenticated to account `123456789012`, the operator reviews the expected plans and runs from the repository root:
+On a workstation authenticated to the target AWS account, review the expected plans and run from the repository root:
 
 ```bash
 bash deploy.sh
@@ -286,8 +287,8 @@ bash deploy.sh
 
 The script performs this sequence:
 
-1. Verifies account `123456789012` and validates both state roots.
-2. Applies the base root in the operator's account.
+1. Verifies the configured target account and validates both state roots.
+2. Applies the base root in the target account.
 3. Reads and validates the static bucket and both publisher-role outputs. It configures the frontend's three static-publication variables, then the five backends' ECR variables. For every application repository it reads the exact remote `main` SHA, dispatches `ci.yaml` on `main` with `expected_sha` and a unique `deployment_id`, correlates the exact newly created run, and watches that run to completion. Historical workflow runs are never rerun.
 4. Bootstraps the first Secrets Manager version without printing its values.
 5. Configures `kubectl`, waits for Argo CD and the ALB with bounded polling, and validates the hostname.
@@ -341,7 +342,7 @@ The second behavior, `/assets/*`, targets private S3, permits only safe reads, f
 
 AWS Secrets Manager is the source of truth. Terraform creates only the deterministic `sports-store/production/app` container and metadata; it deliberately has no `aws_secretsmanager_secret_version` resource. External Secrets Operator runs in the dedicated `external-secrets` namespace. Its Helm-created `external-secrets` ServiceAccount is annotated with a least-privilege IRSA role whose trust is restricted to that exact namespace and ServiceAccount and whose policy can only describe/read this secret ARN.
 
-After the first successful Terraform apply, the operator can inspect or populate the first version from a machine authenticated to the intended AWS account:
+After the first successful Terraform apply, you can inspect or populate the first version from a machine authenticated to the intended AWS account:
 
 ```bash
 bash scripts/bootstrap-application-secrets.sh --check
@@ -383,11 +384,11 @@ An expected first plan creates the Secrets Manager metadata container, the scope
 
 Confirm persistent-data and backup requirements, ensure both Terraform states are available, and run `bash destroy.sh` from the authenticated workstation. Do not remove the Ingress first. The script uses this order:
 
-1. Verifies account `123456789012` and rejects unexpected base or CloudFront state before deletion.
+1. Verifies the configured target account and rejects unexpected base or CloudFront state before deletion.
 2. Initializes the isolated CloudFront root and, if its state contains resources, destroys the distribution, OAC, bucket policy, cache policy, and rewrite function. If stage 2 never ran, this is a no-op. The bucket policy disappears before the base-owned bucket.
 3. Selects the exact EKS cluster from base Terraform outputs, deletes the Argo CD Application so self-heal cannot recreate the Ingress, captures and validates the Ingress hostname, and deletes the namespace's Ingress.
 4. Polls for the exact captured ALB DNS name for at most 30 attempts at 10-second intervals. It stops with an error instead of destroying the VPC if the ALB remains.
-5. Performs the scoped controller-security-group cleanup, destroys the operator's base state, and reports retained available EBS volumes. The base destroy permanently deletes all static files because `force_destroy = true`; scripts never delete the bucket or objects through AWS CLI.
+5. Performs the scoped controller-security-group cleanup, destroys the base state, and reports retained available EBS volumes. The base destroy permanently deletes all static files because `force_destroy = true`; scripts never delete the bucket or objects through AWS CLI.
 
 To add another EKS administrator later, supply an explicit same-account IAM user
 or role ARN through `additional_eks_principal_arns` in an approved, uncommitted

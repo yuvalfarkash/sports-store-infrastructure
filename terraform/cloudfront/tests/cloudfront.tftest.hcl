@@ -19,8 +19,8 @@ run "wrong_account_rejected" {
   override_data {
     target = data.aws_caller_identity.current
     values = {
-      account_id = "324621154117"
-      arn        = "arn:aws:iam::324621154117:user/wrong-account"
+      account_id = "999999999999"
+      arn        = "arn:aws:iam::999999999999:user/wrong-account"
       user_id    = "AIDAWRONGACCOUNT"
     }
   }

@@ -1,5 +1,32 @@
 # Sports Store AWS Infrastructure
 
+> **Part of the Sports Store platform** — a 9-repo polyrepo microservices project. Map: [frontend](https://github.com/yuvalfarkash/sports-store-frontend) · [gateway](https://github.com/yuvalfarkash/sports-store-gateway) · [auth](https://github.com/yuvalfarkash/sports-store-auth-service) · [catalog](https://github.com/yuvalfarkash/sports-store-catalog-service) · [cart](https://github.com/yuvalfarkash/sports-store-cart-service) · [order](https://github.com/yuvalfarkash/sports-store-order-service) · [payment](https://github.com/yuvalfarkash/sports-store-payment-service) · [deployments](https://github.com/yuvalfarkash/sports-store-deployments) · [local dev](https://github.com/yuvalfarkash/sports-store-local)
+
+## Architecture
+
+```mermaid
+flowchart LR
+    U["Browser"] --> CF["CloudFront"]
+    CF -->|"static"| S3[("S3\nfrontend build")]
+    CF -->|"/api/*"| ALB["ALB"]
+    ALB --> ING["K8s Ingress"]
+    ING --> AUTH["auth-service\n:8001"]
+    ING --> CAT["catalog-service\n:8002"]
+    ING --> CART["cart-service\n:8003"]
+    ING --> ORD["order-service\n:8004"]
+    ING --> PAY["payment-service\n:8005"]
+    AUTH --> MDB[("MongoDB")]
+    CAT --> MDB
+    CART --> MDB
+    ORD --> MDB
+    PAY --> MDB
+    ORD -.-> CART
+    ORD -.-> CAT
+    ORD -.-> PAY
+    CART -.-> CAT
+    GHA["GitHub Actions"] -->|"OIDC, no long-lived keys"| AWSI["AWS: ECR / EKS / S3"]
+```
+
 ## AWS account boundary
 
 This configuration targets whichever AWS account and principal are configured
